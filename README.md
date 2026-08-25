@@ -34,7 +34,11 @@ Everything is baked once into `static/` by two scripts — see `tools/`:
   480×360 thumbnail, the coverage mesh becomes `mesh.glb`, and the scan's
   local frame is recovered by fitting pbuf camera poses to the geotags
   (yaw + origin, ~0.7 m residual). Raw exports live in `data/` (git-ignored).
-  The mesh has no RGB of its own, so the app drapes the aerial imagery on it.
+- `uv run tools/bake_ortho.py data/<scan-dir> --id <id>` — bakes a **2.5 cm
+  orthomosaic** from the scan's own photos (GPS-frame camera poses, calibrated
+  intrinsics and radial dewarp from the Skydio XMP; OpenCV camera axes) over
+  the coverage mesh's height. The app drapes it on the mesh *and* the terrain
+  inside its footprint (`ortho.jpg` + coverage mask); NAIP shows elsewhere.
 
 Real flight logs of other kinds should be converted to the same JSON shape
 (documented in `gen_flights.py`); the app reads `flights/index.json`.
@@ -54,6 +58,6 @@ switches between missions; click / trigger pins the panel.
 
 ## Roadmap
 
-- Texture the scan mesh from the drone photos themselves (poses + intrinsics are in the XMP)
+- Ortho quality: occlusion-aware / multi-photo blending (currently best-centred photo wins, no seam feathering)
 - Gaussian splat at a sample point (Spark `SplatMesh`, as in `coral`)
 - Hand-tracking input (see `datacenter`)

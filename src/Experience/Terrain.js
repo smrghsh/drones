@@ -15,9 +15,27 @@ void main(){
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }`;
 
-const fragmentShader = /* glsl */ `
-uniform sampler2D uHeight;
+// Shared by the terrain and the drape material: aerial imagery, overridden by a
+// high-res orthomosaic wherever one is loaded and covers the texel.
+const groundGlsl = /* glsl */ `
 uniform sampler2D uImagery;
+uniform sampler2D uOrtho;
+uniform sampler2D uOrthoMask;
+uniform float uOrthoOn;
+uniform vec2 uOrthoMin;   // model-frame xz
+uniform vec2 uOrthoMax;
+vec3 groundColor(vec2 xz, vec2 uvImagery){
+  vec3 col = texture2D(uImagery, uvImagery).rgb;
+  if (uOrthoOn > 0.5 && all(greaterThan(xz, uOrthoMin)) && all(lessThan(xz, uOrthoMax))) {
+    vec2 t = (xz - uOrthoMin) / (uOrthoMax - uOrthoMin);
+    vec2 ouv = vec2(t.x, 1.0 - t.y);   // ortho row 0 = north = min z
+    if (texture2D(uOrthoMask, ouv).r > 0.9) col = texture2D(uOrtho, ouv).rgb;
+  }
+  return col;
+}`;
+
+const fragmentShader = groundGlsl + /* glsl */ `
+uniform sampler2D uHeight;
 uniform float uTexel;
 uniform float uMetresPerTexel;
 uniform float uExaggeration;
@@ -37,7 +55,7 @@ void main(){
   float zu = decode(texture2D(uHeight, vUv + vec2(0.0,uTexel)).rgb);
   vec3 n = normalize(vec3(-(zr-zl)*uExaggeration, -(zu-zd)*uExaggeration, 2.0*uMetresPerTexel));
   float light = 0.45 + 0.65 * max(dot(n, normalize(uSun)), 0.0);
-  vec3 img = texture2D(uImagery, vUv).rgb;
+  vec3 img = groundColor(vXZ, vUv);
   vec3 hyps = mix(vec3(0.16,0.24,0.14), vec3(0.75,0.68,0.5), smoothstep(80.0, 175.0, vHeight));
   vec3 col = mix(hyps, img, uImageryMix) * light;
   bool inCut = all(greaterThan(vXZ, uCutMin)) && all(lessThan(vXZ, uCutMax));
@@ -49,24 +67,26 @@ const drapeVertex = /* glsl */ `
 uniform vec3 uModelOrigin; // world position of the model group
 uniform float uSize;       // terrain edge length, scene units
 varying vec2 vUv;
+varying vec2 vXZ;
 varying vec3 vNormalW;
 void main(){
   vec4 wp = modelMatrix * vec4(position, 1.0);
   vec3 mp = wp.xyz - uModelOrigin;
+  vXZ = mp.xz;
   vUv = vec2(mp.x / uSize + 0.5, 0.5 - mp.z / uSize);
   vNormalW = normalize(mat3(modelMatrix) * normal);
   gl_Position = projectionMatrix * viewMatrix * wp;
 }`;
-const drapeFragment = /* glsl */ `
-uniform sampler2D uImagery;
+const drapeFragment = groundGlsl + /* glsl */ `
 uniform vec3 uSun;
 varying vec2 vUv;
+varying vec2 vXZ;
 varying vec3 vNormalW;
 void main(){
   vec3 n = normalize(vNormalW);
   if (!gl_FrontFacing) n = -n;
   float light = 0.5 + 0.6 * max(dot(n, normalize(uSun)), 0.0);
-  vec3 col = texture2D(uImagery, vUv).rgb * light;
+  vec3 col = groundColor(vXZ, vUv) * light;
   gl_FragColor = vec4(col, 1.0);
   #include <colorspace_fragment>
 }`;
@@ -191,6 +211,11 @@ export default class Terrain extends THREE.Group {
       uCutMin: { value: new THREE.Vector2(1, 1) },
       uCutMax: { value: new THREE.Vector2(0, 0) },
       uCutAlpha: { value: 0.8 },
+      uOrtho: { value: null },
+      uOrthoMask: { value: null },
+      uOrthoOn: { value: 0 },
+      uOrthoMin: { value: new THREE.Vector2() },
+      uOrthoMax: { value: new THREE.Vector2() },
     };
     const seg = this.hw - 1;
     const geom = new THREE.PlaneGeometry(this.size, this.size, seg, seg);
@@ -231,6 +256,11 @@ export default class Terrain extends THREE.Group {
       fragmentShader: drapeFragment,
       uniforms: {
         uImagery: this.uniforms.uImagery,
+        uOrtho: this.uniforms.uOrtho,
+        uOrthoMask: this.uniforms.uOrthoMask,
+        uOrthoOn: this.uniforms.uOrthoOn,
+        uOrthoMin: this.uniforms.uOrthoMin,
+        uOrthoMax: this.uniforms.uOrthoMax,
         uSun: this.uniforms.uSun,
         uSize: { value: this.size },
         uModelOrigin: { value: this.parent.getWorldPosition(new THREE.Vector3()) },
@@ -238,6 +268,34 @@ export default class Terrain extends THREE.Group {
       side: THREE.DoubleSide,
       depthTest: false,
     });
+  }
+
+  /**
+   * Show a baked orthomosaic (see tools/bake_ortho.py) inside its footprint.
+   * spec.bounds_m is in site-local metres (e/n); textures are shared uniforms
+   * so the drape material picks them up too. Pass null to disable.
+   */
+  async setOrtho(spec) {
+    if (!spec) {
+      this.uniforms.uOrthoOn.value = 0;
+      return;
+    }
+    if (this.orthoSpec !== spec) {
+      const loader = new THREE.TextureLoader();
+      const [tex, mask] = await Promise.all([loader.loadAsync(spec.file), loader.loadAsync(spec.mask)]);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = this.experience.renderer.instance.capabilities.getMaxAnisotropy();
+      mask.colorSpace = THREE.NoColorSpace;
+      mask.minFilter = mask.magFilter = THREE.NearestFilter;
+      mask.generateMipmaps = false;
+      this.uniforms.uOrtho.value = tex;
+      this.uniforms.uOrthoMask.value = mask;
+      const b = spec.bounds_m;
+      this.uniforms.uOrthoMin.value.set(b.e_min / METERS_PER_UNIT, -b.n_max / METERS_PER_UNIT);
+      this.uniforms.uOrthoMax.value.set(b.e_max / METERS_PER_UNIT, -b.n_min / METERS_PER_UNIT);
+      this.orthoSpec = spec;
+    }
+    this.uniforms.uOrthoOn.value = 1;
   }
 
   /** Fade the terrain inside a model-frame xz box (null clears). */

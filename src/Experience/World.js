@@ -52,7 +52,9 @@ export default class World {
     for (const p of this.paths) p.setActive(id === "All" || p.flight.id === id);
     const target = this.paths.find((p) => p.flight.id === id);
     this.focus(target);
-    this.applyCutout(target);
+    // Orthomosaic of whichever flight has one and is showing (first wins).
+    const withOrtho = this.paths.find((p) => p.flight.ortho && (id === "All" || p.flight.id === id));
+    this.terrain.setOrtho(withOrtho?.flight.ortho ?? null);
   }
 
   /** Let an active scan mesh show through the (coarser) lidar terrain. */
