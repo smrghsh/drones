@@ -7,7 +7,7 @@ const experience = new Experience({
   canvas: document.querySelector("canvas.webgl"),
   sources,
   camera: {
-    position: [-9, 7, 9],
+    position: [-22, 18, 22],
     lookAt: [0, 0.75, 0],
     orbit: { damping: true },
   },

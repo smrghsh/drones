@@ -7,9 +7,11 @@ uniform float uZCenter;
 uniform float uHeightScale;
 varying vec2 vUv;
 varying float vHeight;
+varying vec2 vXZ;
 void main(){
   vUv = uv;
   vHeight = position.z / uHeightScale + uZCenter;  // vertices are displaced on the CPU
+  vXZ = vec2(position.x, -position.y);             // model-frame x/z (plane is rotated -PI/2 about X)
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }`;
 
@@ -21,8 +23,12 @@ uniform float uMetresPerTexel;
 uniform float uExaggeration;
 uniform vec3 uSun;
 uniform float uImageryMix;
+uniform vec2 uCutMin;   // model-frame xz window that fades out (scan mesh footprint)
+uniform vec2 uCutMax;
+uniform float uCutAlpha;
 varying vec2 vUv;
 varying float vHeight;
+varying vec2 vXZ;
 float decode(vec3 c){ return (c.r*255.0*256.0 + c.g*255.0 + c.b*255.0/256.0) - 32768.0; }
 void main(){
   float zl = decode(texture2D(uHeight, vUv - vec2(uTexel,0.0)).rgb);
@@ -34,6 +40,33 @@ void main(){
   vec3 img = texture2D(uImagery, vUv).rgb;
   vec3 hyps = mix(vec3(0.16,0.24,0.14), vec3(0.75,0.68,0.5), smoothstep(80.0, 175.0, vHeight));
   vec3 col = mix(hyps, img, uImageryMix) * light;
+  bool inCut = all(greaterThan(vXZ, uCutMin)) && all(lessThan(vXZ, uCutMax));
+  gl_FragColor = vec4(col, inCut ? uCutAlpha : 1.0);
+  #include <colorspace_fragment>
+}`;
+
+const drapeVertex = /* glsl */ `
+uniform vec3 uModelOrigin; // world position of the model group
+uniform float uSize;       // terrain edge length, scene units
+varying vec2 vUv;
+varying vec3 vNormalW;
+void main(){
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vec3 mp = wp.xyz - uModelOrigin;
+  vUv = vec2(mp.x / uSize + 0.5, 0.5 - mp.z / uSize);
+  vNormalW = normalize(mat3(modelMatrix) * normal);
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+const drapeFragment = /* glsl */ `
+uniform sampler2D uImagery;
+uniform vec3 uSun;
+varying vec2 vUv;
+varying vec3 vNormalW;
+void main(){
+  vec3 n = normalize(vNormalW);
+  if (!gl_FrontFacing) n = -n;
+  float light = 0.5 + 0.6 * max(dot(n, normalize(uSun)), 0.0);
+  vec3 col = texture2D(uImagery, vUv).rgb * light;
   gl_FragColor = vec4(col, 1.0);
   #include <colorspace_fragment>
 }`;
@@ -90,6 +123,12 @@ export default class Terrain extends THREE.Group {
   setSphere(worldPoint) {
     const local = this.worldToLocal(worldPoint.clone());
     this.marker.position.copy(local);
+    const xr = this.experience.renderer.instance.xr;
+    const cam = xr.isPresenting ? xr.getCamera() : this.experience.camera.instance;
+    const d = cam.getWorldPosition(new THREE.Vector3()).distanceTo(worldPoint);
+    const k = THREE.MathUtils.clamp(d * 0.18, 0.05, 1.2);
+    this.label.scale.set(k, k / 4, 1);
+    this.marker.scale.setScalar(THREE.MathUtils.clamp(d * 0.15, 0.1, 1));
     const { e, n } = sceneToMetres(local);
     const { lat, lon } = fromLocalMetres(e, n);
     const msl = this.heightAt(e, n);
@@ -149,6 +188,9 @@ export default class Terrain extends THREE.Group {
       uExaggeration: { value: settings.verticalExaggeration },
       uSun: { value: new THREE.Vector3(-0.4, 0.8, 0.5) },
       uImageryMix: { value: 1.0 },
+      uCutMin: { value: new THREE.Vector2(1, 1) },
+      uCutMax: { value: new THREE.Vector2(0, 0) },
+      uCutAlpha: { value: 0.8 },
     };
     const seg = this.hw - 1;
     const geom = new THREE.PlaneGeometry(this.size, this.size, seg, seg);
@@ -161,7 +203,7 @@ export default class Terrain extends THREE.Group {
     geom.computeBoundingSphere();
     this.mesh = new THREE.Mesh(
       geom,
-      new THREE.ShaderMaterial({ vertexShader, fragmentShader, uniforms: this.uniforms }),
+      new THREE.ShaderMaterial({ vertexShader, fragmentShader, uniforms: this.uniforms, transparent: true }),
     );
     this.mesh.rotation.x = -Math.PI / 2;
     this.mesh.scale.z = settings.verticalExaggeration;
@@ -180,6 +222,34 @@ export default class Terrain extends THREE.Group {
     this.base = base;
     this.add(base);
     return this;
+  }
+
+  /** Material that drapes the aerial imagery onto any mesh placed in the model frame. */
+  drapeMaterial() {
+    return new THREE.ShaderMaterial({
+      vertexShader: drapeVertex,
+      fragmentShader: drapeFragment,
+      uniforms: {
+        uImagery: this.uniforms.uImagery,
+        uSun: this.uniforms.uSun,
+        uSize: { value: this.size },
+        uModelOrigin: { value: this.parent.getWorldPosition(new THREE.Vector3()) },
+      },
+      side: THREE.DoubleSide,
+      depthTest: false,
+    });
+  }
+
+  /** Fade the terrain inside a model-frame xz box (null clears). */
+  setCutout(box) {
+    if (!box) {
+      this.uniforms.uCutMin.value.set(1, 1);
+      this.uniforms.uCutMax.value.set(0, 0);
+      return;
+    }
+    const pad = 3 / METERS_PER_UNIT;
+    this.uniforms.uCutMin.value.set(box.min.x - pad, box.min.z - pad);
+    this.uniforms.uCutMax.value.set(box.max.x + pad, box.max.z + pad);
   }
 
   setExaggeration(v) {

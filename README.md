@@ -28,8 +28,16 @@ Everything is baked once into `static/` by two scripts — see `tools/`:
   centred on the farm → `static/farm/{imagery.jpg,height.png,site.json}`.
 - `uv run tools/gen_flights.py` — three **synthetic** sample missions
   (`static/flights/`). Sample "images" are NAIP crops under the drone.
-  Real flight logs should be converted to the same JSON shape (documented in
-  the script docstring) and dropped in; the app reads `flights/index.json`.
+- `uv run tools/import_skydio.py data/<scan-dir>` — imports a real **Skydio
+  3D Scan** export (Pix4D geolocation CSV + photos + `scan_output.pbuf` +
+  `coverage_within_params.gltf`): every photo becomes a sample with a
+  480×360 thumbnail, the coverage mesh becomes `mesh.glb`, and the scan's
+  local frame is recovered by fitting pbuf camera poses to the geotags
+  (yaw + origin, ~0.7 m residual). Raw exports live in `data/` (git-ignored).
+  The mesh has no RGB of its own, so the app drapes the aerial imagery on it.
+
+Real flight logs of other kinds should be converted to the same JSON shape
+(documented in `gen_flights.py`); the app reads `flights/index.json`.
 
 ## Code map
 
@@ -46,6 +54,6 @@ switches between missions; click / trigger pins the panel.
 
 ## Roadmap
 
-- Photogrammetry mesh / Gaussian splat at a sample point (Spark `SplatMesh`, as in `coral`)
-- Real flight logs + imagery
+- Texture the scan mesh from the drone photos themselves (poses + intrinsics are in the XMP)
+- Gaussian splat at a sample point (Spark `SplatMesh`, as in `coral`)
 - Hand-tracking input (see `datacenter`)

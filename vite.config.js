@@ -13,6 +13,7 @@ export default defineConfig({
   publicDir: "../static/",
   base: "./",
   plugins: ssl ? [basicSsl()] : [],
+  resolve: { dedupe: ["three"] }, // brahma-xr and the app must share one three
   server: {
     host: true, // reachable from headsets on your LAN
     https: ssl,

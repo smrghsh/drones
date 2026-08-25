@@ -13,5 +13,10 @@
     "id": "transect-meadow",
     "name": "Transect \u2014 Arboretum \u2192 Great Meadow",
     "file": "./flights/transect-meadow.json"
+  },
+  {
+    "id": "test2",
+    "name": "Test2 \u2014 Skydio 3D Scan (crop rows)",
+    "file": "./flights/test2.json"
   }
 ]

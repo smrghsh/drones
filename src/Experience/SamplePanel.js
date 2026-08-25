@@ -52,9 +52,10 @@ export default class SamplePanel extends THREE.Group {
     return this.images.get(url);
   }
 
-  show(sample, flight, worldPoint) {
+  show(sample, flight, worldPoint, scale = 1) {
     this.current = sample;
     this.flight = flight;
+    this.scale.setScalar(scale);
     this.parent?.worldToLocal(this.position.copy(worldPoint));
     this.draw(sample, flight);
     this.visible = true;
@@ -78,20 +79,23 @@ export default class SamplePanel extends THREE.Group {
     c.fillStyle = "#c9d1e0"; c.font = "24px system-ui, sans-serif";
     c.fillText(`${flight.drone} · ${flight.camera}`, 36, 92);
 
-    const fields = [
-      ["Sample", s.id],
-      ["Time", `t+${s.t}s  (${flight.date.slice(0, 10)})`],
-      ["Lat / Lon", `${s.lat.toFixed(6)}, ${s.lon.toFixed(6)}`],
-      ["Altitude", `${s.alt_msl} m MSL · ${s.alt_agl} m AGL`],
-      ["Heading", `${s.heading}°   gimbal ${s.gimbal_pitch}°`],
-      ["Battery", `${s.battery}%`],
-      ["Notes", s.notes],
-    ];
-    let y = 138;
+    const fields = flight.panel_fields
+      ? flight.panel_fields.map((k) => [k.replace(/_/g, " "), fmt(k, s[k])])
+      : [
+          ["Sample", s.id],
+          ["Time", `t+${s.t}s  (${flight.date.slice(0, 10)})`],
+          ["Lat / Lon", `${s.lat.toFixed(6)}, ${s.lon.toFixed(6)}`],
+          ["Altitude", `${s.alt_msl} m MSL · ${s.alt_agl} m AGL`],
+          ["Heading", `${s.heading}°   gimbal ${s.gimbal_pitch}°`],
+          ["Battery", `${s.battery}%`],
+          ["Notes", s.notes],
+        ];
+    const step = Math.min(50, Math.floor((H - 150) / fields.length));
+    let y = 130;
     for (const [k, v] of fields) {
       c.fillStyle = "#7f8aa3"; c.font = "18px system-ui, sans-serif"; c.fillText(k.toUpperCase(), 36, y);
-      c.fillStyle = "#f2f5fa"; c.font = "24px system-ui, sans-serif"; c.fillText(String(v), 36, y + 26);
-      y += 50;
+      c.fillStyle = "#f2f5fa"; c.font = "24px system-ui, sans-serif"; c.fillText(String(v), 36, y + 24);
+      y += step;
     }
 
     // Image well
@@ -122,6 +126,15 @@ export default class SamplePanel extends THREE.Group {
     this._camPos.y = this.getWorldPosition(new THREE.Vector3()).y; // yaw-only billboard
     this.lookAt(this._camPos);
   }
+}
+
+function fmt(k, v) {
+  if (v == null) return "—";
+  if (k === "t") return `t+${v}s`;
+  if (k === "lat" || k === "lon") return v.toFixed(6);
+  if (k.startsWith("alt")) return `${v} m`;
+  if (["heading", "gimbal_pitch", "roll", "omega", "phi", "kappa"].includes(k)) return `${v}°`;
+  return String(v);
 }
 
 function roundRect(c, x, y, w, h, r) {
