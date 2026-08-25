@@ -41,9 +41,6 @@ uniform float uMetresPerTexel;
 uniform float uExaggeration;
 uniform vec3 uSun;
 uniform float uImageryMix;
-uniform vec2 uCutMin;   // model-frame xz window that fades out (scan mesh footprint)
-uniform vec2 uCutMax;
-uniform float uCutAlpha;
 varying vec2 vUv;
 varying float vHeight;
 varying vec2 vXZ;
@@ -58,8 +55,7 @@ void main(){
   vec3 img = groundColor(vXZ, vUv);
   vec3 hyps = mix(vec3(0.16,0.24,0.14), vec3(0.75,0.68,0.5), smoothstep(80.0, 175.0, vHeight));
   vec3 col = mix(hyps, img, uImageryMix) * light;
-  bool inCut = all(greaterThan(vXZ, uCutMin)) && all(lessThan(vXZ, uCutMax));
-  gl_FragColor = vec4(col, inCut ? uCutAlpha : 1.0);
+  gl_FragColor = vec4(col, 1.0);
   #include <colorspace_fragment>
 }`;
 
@@ -85,7 +81,9 @@ varying vec3 vNormalW;
 void main(){
   vec3 n = normalize(vNormalW);
   if (!gl_FrontFacing) n = -n;
-  float light = 0.5 + 0.6 * max(dot(n, normalize(uSun)), 0.0);
+  vec3 sun = normalize(uSun);
+  float ndl = dot(n, sun);
+  float light = 0.32 + 0.85 * max(ndl, 0.0) + 0.15 * max(-n.y, 0.0);  // strong key light, faint bounce on under-faces
   vec3 col = groundColor(vXZ, vUv) * light;
   gl_FragColor = vec4(col, 1.0);
   #include <colorspace_fragment>
@@ -147,8 +145,10 @@ export default class Terrain extends THREE.Group {
     const cam = xr.isPresenting ? xr.getCamera() : this.experience.camera.instance;
     const d = cam.getWorldPosition(new THREE.Vector3()).distanceTo(worldPoint);
     const k = THREE.MathUtils.clamp(d * 0.18, 0.05, 1.2);
-    this.label.scale.set(k, k / 4, 1);
-    this.marker.scale.setScalar(THREE.MathUtils.clamp(d * 0.15, 0.1, 1));
+    const sy = settings.verticalExaggeration;
+    this.label.scale.set(k, k / 4 / sy, 1);
+    const ms = THREE.MathUtils.clamp(d * 0.15, 0.1, 1);
+    this.marker.scale.set(ms, ms / sy, ms);
     const { e, n } = sceneToMetres(local);
     const { lat, lon } = fromLocalMetres(e, n);
     const msl = this.heightAt(e, n);
@@ -205,12 +205,9 @@ export default class Terrain extends THREE.Group {
       uZCenter: { value: this.site.z_center },
       uTexel: { value: 1 / this.hw },
       uMetresPerTexel: { value: this.site.size_m / (this.hw - 1) },
-      uExaggeration: { value: settings.verticalExaggeration },
-      uSun: { value: new THREE.Vector3(-0.4, 0.8, 0.5) },
+      uExaggeration: { value: 1 },
+      uSun: { value: new THREE.Vector3(-0.6, 0.55, 0.45) }, // lowish sun so relief reads
       uImageryMix: { value: 1.0 },
-      uCutMin: { value: new THREE.Vector2(1, 1) },
-      uCutMax: { value: new THREE.Vector2(0, 0) },
-      uCutAlpha: { value: 0.8 },
       uOrtho: { value: null },
       uOrthoMask: { value: null },
       uOrthoOn: { value: 0 },
@@ -228,10 +225,11 @@ export default class Terrain extends THREE.Group {
     geom.computeBoundingSphere();
     this.mesh = new THREE.Mesh(
       geom,
-      new THREE.ShaderMaterial({ vertexShader, fragmentShader, uniforms: this.uniforms, transparent: true }),
+      // Opaque on purpose: scan meshes draw over it via renderOrder + depthTest:false,
+      // which only works if the terrain isn't in three's (later) transparent pass.
+      new THREE.ShaderMaterial({ vertexShader, fragmentShader, uniforms: this.uniforms }),
     );
     this.mesh.rotation.x = -Math.PI / 2;
-    this.mesh.scale.z = settings.verticalExaggeration;
     this.add(this.mesh);
     this.marker.raycast = () => {};
     this.label.raycast = () => {};
@@ -242,7 +240,7 @@ export default class Terrain extends THREE.Group {
       new THREE.BoxGeometry(this.size, 0.02, this.size),
       new THREE.MeshBasicMaterial({ color: 0x1c2230 }),
     );
-    base.position.y = ((this.site.z_min - this.site.z_center) / METERS_PER_UNIT) * settings.verticalExaggeration - 0.02;
+    base.position.y = (this.site.z_min - this.site.z_center) / METERS_PER_UNIT - 0.02;
     base.raycast = () => {};
     this.base = base;
     this.add(base);
@@ -298,24 +296,10 @@ export default class Terrain extends THREE.Group {
     this.uniforms.uOrthoOn.value = 1;
   }
 
-  /** Fade the terrain inside a model-frame xz box (null clears). */
-  setCutout(box) {
-    if (!box) {
-      this.uniforms.uCutMin.value.set(1, 1);
-      this.uniforms.uCutMax.value.set(0, 0);
-      return;
-    }
-    const pad = 3 / METERS_PER_UNIT;
-    this.uniforms.uCutMin.value.set(box.min.x - pad, box.min.z - pad);
-    this.uniforms.uCutMax.value.set(box.max.x + pad, box.max.z + pad);
-  }
-
+  /** Lighting only — geometry exaggeration is World.model.scale.y. */
   setExaggeration(v) {
-    settings.verticalExaggeration = v;
     if (!this.uniforms) return;
     this.uniforms.uExaggeration.value = v;
-    this.mesh.scale.z = v;
-    this.base.position.y = ((this.site.z_min - this.site.z_center) / METERS_PER_UNIT) * v - 0.02;
   }
 
   /** Ground elevation (m MSL) at local metres east/north; bilinear. */

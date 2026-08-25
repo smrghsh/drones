@@ -28,12 +28,10 @@ export function toLocalMetres(lat, lon, altMsl = 0) {
 }
 
 /** Local metres -> scene units (in the model group's frame). */
+// Note: vertical exaggeration is NOT baked in here — World.model.scale.y applies it
+// to everything (terrain, paths, meshes) uniformly.
 export function metresToScene(e, n, up, target = new THREE.Vector3()) {
-  return target.set(
-    e / METERS_PER_UNIT,
-    (up * settings.verticalExaggeration) / METERS_PER_UNIT,
-    -n / METERS_PER_UNIT,
-  );
+  return target.set(e / METERS_PER_UNIT, up / METERS_PER_UNIT, -n / METERS_PER_UNIT);
 }
 
 export function project(lat, lon, altMsl, target) {
@@ -54,6 +52,6 @@ export function sceneToMetres(p) {
   return {
     e: p.x * METERS_PER_UNIT,
     n: -p.z * METERS_PER_UNIT,
-    up: (p.y * METERS_PER_UNIT) / settings.verticalExaggeration,
+    up: p.y * METERS_PER_UNIT,
   };
 }

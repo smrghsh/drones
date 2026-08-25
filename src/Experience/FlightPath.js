@@ -103,7 +103,7 @@ export default class FlightPath extends THREE.Group {
       yawed.add(mesh);
       const anchor = new THREE.Group();
       anchor.position.copy(project(spec.origin.lat, spec.origin.lon, spec.origin.alt_msl));
-      anchor.scale.set(1 / METERS_PER_UNIT, settings.verticalExaggeration / METERS_PER_UNIT, 1 / METERS_PER_UNIT);
+      anchor.scale.setScalar(1 / METERS_PER_UNIT); // vertical exaggeration is applied on World.model
       anchor.add(yawed);
       this.mesh = anchor;
       this.add(anchor);
@@ -113,12 +113,6 @@ export default class FlightPath extends THREE.Group {
     });
   }
 
-  /** Scan-mesh footprint in the model frame (parent of this path), or null. */
-  meshFootprint() {
-    if (!this.meshBounds) return null;
-    const inv = this.parent.matrixWorld.clone().invert();
-    return this.meshBounds.clone().applyMatrix4(inv);
-  }
 
   /** World-space bounding box of the path, for camera focusing. */
   bounds() {

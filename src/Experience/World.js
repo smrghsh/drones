@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { Experience, Environment } from "brahma-xr";
-import { setSite, MODEL_Y } from "./domain.js";
+import { setSite, MODEL_Y, settings } from "./domain.js";
 import Terrain from "./Terrain.js";
 import FlightPath from "./FlightPath.js";
 import SamplePanel from "./SamplePanel.js";
@@ -57,11 +57,13 @@ export default class World {
     this.terrain.setOrtho(withOrtho?.flight.ortho ?? null);
   }
 
-  /** Let an active scan mesh show through the (coarser) lidar terrain. */
-  applyCutout(path) {
-    const fp = path?.meshFootprint();
-    this.terrain.setCutout(fp);
-    if (path?.flight.mesh && !fp) path.addEventListener("meshloaded", () => this.applyCutout(path), { once: true });
+
+  /** Scale relief of everything geo (terrain, paths, scan meshes) about model y=0. */
+  setExaggeration(v) {
+    settings.verticalExaggeration = v;
+    this.model.scale.y = v;
+    this.terrain.setExaggeration(v);
+    this.panel.scale.set(this.panel.baseScale, this.panel.baseScale / v, this.panel.baseScale);
   }
 
   /** Move the orbit camera to frame a path (or the whole model when none). */
@@ -90,11 +92,7 @@ export default class World {
     f.add(this.params, "flight", options).name("Sample path").onChange((v) => this.setActiveFlight(v));
     f.add({ unpin: () => this.panel.setPinned(false) }, "unpin").name("Unpin panel");
     const t = ui.addFolder("Terrain");
-    t.add(this.params, "exaggeration", 0.5, 4, 0.1).name("Vertical ×").onChange((v) => {
-      this.terrain.setExaggeration(v);
-      // paths are baked in scene units; rebuild positions on change
-      for (const p of this.paths) p.scale.y = v;
-    });
+    t.add(this.params, "exaggeration", 0.5, 6, 0.1).name("Vertical ×").onChange((v) => this.setExaggeration(v));
     t.add(this.params, "imagery", 0, 1, 0.05).name("Imagery mix").onChange((v) => {
       this.terrain.uniforms.uImageryMix.value = v;
     });

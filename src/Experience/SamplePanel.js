@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { Experience } from "brahma-xr";
+import { settings } from "./domain.js";
 
 const W = 1024, H = 512;
 
@@ -35,6 +36,7 @@ export default class SamplePanel extends THREE.Group {
     this.stem.position.y = 0.11;
     this.add(this.stem);
 
+    this.baseScale = 1;
     this.images = new Map();
     this.visible = false;
     this.pinned = false;
@@ -55,7 +57,8 @@ export default class SamplePanel extends THREE.Group {
   show(sample, flight, worldPoint, scale = 1) {
     this.current = sample;
     this.flight = flight;
-    this.scale.setScalar(scale);
+    this.baseScale = scale;
+    this.scale.set(scale, scale / settings.verticalExaggeration, scale); // parent model is y-scaled
     this.parent?.worldToLocal(this.position.copy(worldPoint));
     this.draw(sample, flight);
     this.visible = true;
