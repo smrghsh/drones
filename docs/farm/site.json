@@ -1,0 +1,13 @@
+{
+  "name": "UC Santa Cruz Farm (CASFS)",
+  "lat": 36.9826,
+  "lon": -122.0552,
+  "size_m": 1200.0,
+  "img_px": 2048,
+  "hgt_px": 513,
+  "z_min": 84.99623107910156,
+  "z_max": 170.75221252441406,
+  "z_center": 134.45481872558594,
+  "encoding": "terrarium: z = (R*256 + G + B/256) - 32768",
+  "frame": "x = east metres, z = -north metres from centre (aeqd)"
+}

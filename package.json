@@ -1,0 +1,21 @@
+{
+  "name": "drones",
+  "private": true,
+  "version": "1.0.0",
+  "description": "A shared virtual world — built on brahma-xr",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "brahma-xr": "^2.0.0-beta.0",
+    "lil-gui": "^0.17.0",
+    "three": "^0.169.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^1.1.0",
+    "vite": "^5.4.0"
+  }
+}

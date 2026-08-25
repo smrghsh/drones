@@ -1,0 +1,46 @@
+* {
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  overflow: hidden;
+  background: black;
+  font-family: system-ui, sans-serif;
+}
+
+.webgl {
+  position: fixed;
+  top: 0;
+  left: 0;
+  outline: none;
+}
+
+#loading {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  background: black;
+  z-index: 10;
+}
+
+#join {
+  position: fixed;
+  bottom: 1rem;
+  left: 1rem;
+  z-index: 5;
+  padding: 0.5rem 1rem;
+  border: 1px solid white;
+  border-radius: 0.25rem;
+  background: rgba(0, 0, 0, 0.5);
+  color: white;
+  cursor: pointer;
+}
+
+#join:hover {
+  background: rgba(255, 255, 255, 0.2);
+}

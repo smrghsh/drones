@@ -1,0 +1,17 @@
+[
+  {
+    "id": "survey-fields",
+    "name": "Survey A \u2014 Field rows (lawnmower)",
+    "file": "./flights/survey-fields.json"
+  },
+  {
+    "id": "orbit-greenhouse",
+    "name": "Orbit \u2014 Greenhouses & barn",
+    "file": "./flights/orbit-greenhouse.json"
+  },
+  {
+    "id": "transect-meadow",
+    "name": "Transect \u2014 Arboretum \u2192 Great Meadow",
+    "file": "./flights/transect-meadow.json"
+  }
+]
