@@ -19,18 +19,29 @@ void main(){
 // high-res orthomosaic wherever one is loaded and covers the texel.
 const groundGlsl = /* glsl */ `
 uniform sampler2D uImagery;
-uniform sampler2D uOrtho;
-uniform sampler2D uOrthoMask;
-uniform float uOrthoOn;
-uniform vec2 uOrthoMin;   // model-frame xz
-uniform vec2 uOrthoMax;
+// Up to two orthomosaics (one per scan showing); later slot wins where they overlap.
+uniform sampler2D uOrtho0;
+uniform sampler2D uOrthoMask0;
+uniform float uOrthoOn0;
+uniform vec2 uOrthoMin0;   // model-frame xz
+uniform vec2 uOrthoMax0;
+uniform sampler2D uOrtho1;
+uniform sampler2D uOrthoMask1;
+uniform float uOrthoOn1;
+uniform vec2 uOrthoMin1;
+uniform vec2 uOrthoMax1;
+bool orthoAt(sampler2D tex, sampler2D mask, float on, vec2 mn, vec2 mx, vec2 xz, inout vec3 col){
+  if (on < 0.5 || any(lessThan(xz, mn)) || any(greaterThan(xz, mx))) return false;
+  vec2 t = (xz - mn) / (mx - mn);
+  vec2 ouv = vec2(t.x, 1.0 - t.y);   // ortho row 0 = north = min z
+  if (texture2D(mask, ouv).r < 0.9) return false;
+  col = texture2D(tex, ouv).rgb;
+  return true;
+}
 vec3 groundColor(vec2 xz, vec2 uvImagery){
   vec3 col = texture2D(uImagery, uvImagery).rgb;
-  if (uOrthoOn > 0.5 && all(greaterThan(xz, uOrthoMin)) && all(lessThan(xz, uOrthoMax))) {
-    vec2 t = (xz - uOrthoMin) / (uOrthoMax - uOrthoMin);
-    vec2 ouv = vec2(t.x, 1.0 - t.y);   // ortho row 0 = north = min z
-    if (texture2D(uOrthoMask, ouv).r > 0.9) col = texture2D(uOrtho, ouv).rgb;
-  }
+  if (!orthoAt(uOrtho1, uOrthoMask1, uOrthoOn1, uOrthoMin1, uOrthoMax1, xz, col))
+    orthoAt(uOrtho0, uOrthoMask0, uOrthoOn0, uOrthoMin0, uOrthoMax0, xz, col);
   return col;
 }`;
 
@@ -208,12 +219,13 @@ export default class Terrain extends THREE.Group {
       uExaggeration: { value: 1 },
       uSun: { value: new THREE.Vector3(-0.6, 0.55, 0.45) }, // lowish sun so relief reads
       uImageryMix: { value: 1.0 },
-      uOrtho: { value: null },
-      uOrthoMask: { value: null },
-      uOrthoOn: { value: 0 },
-      uOrthoMin: { value: new THREE.Vector2() },
-      uOrthoMax: { value: new THREE.Vector2() },
+      uOrtho0: { value: null }, uOrthoMask0: { value: null }, uOrthoOn0: { value: 0 },
+      uOrthoMin0: { value: new THREE.Vector2() }, uOrthoMax0: { value: new THREE.Vector2() },
+      uOrtho1: { value: null }, uOrthoMask1: { value: null }, uOrthoOn1: { value: 0 },
+      uOrthoMin1: { value: new THREE.Vector2() }, uOrthoMax1: { value: new THREE.Vector2() },
     };
+    this.orthoSlots = [null, null]; // spec loaded in each slot
+    this.orthoTex = new Map(); // spec -> [tex, mask]
     const seg = this.hw - 1;
     const geom = new THREE.PlaneGeometry(this.size, this.size, seg, seg);
     // Displace on the CPU so raycasts hit the real surface (grid == texels).
@@ -254,11 +266,7 @@ export default class Terrain extends THREE.Group {
       fragmentShader: drapeFragment,
       uniforms: {
         uImagery: this.uniforms.uImagery,
-        uOrtho: this.uniforms.uOrtho,
-        uOrthoMask: this.uniforms.uOrthoMask,
-        uOrthoOn: this.uniforms.uOrthoOn,
-        uOrthoMin: this.uniforms.uOrthoMin,
-        uOrthoMax: this.uniforms.uOrthoMax,
+        ...Object.fromEntries(["uOrtho", "uOrthoMask", "uOrthoOn", "uOrthoMin", "uOrthoMax"].flatMap((k) => [0, 1].map((i) => [k + i, this.uniforms[k + i]]))),
         uSun: this.uniforms.uSun,
         uSize: { value: this.size },
         uModelOrigin: { value: this.parent.getWorldPosition(new THREE.Vector3()) },
@@ -269,31 +277,36 @@ export default class Terrain extends THREE.Group {
   }
 
   /**
-   * Show a baked orthomosaic (see tools/bake_ortho.py) inside its footprint.
-   * spec.bounds_m is in site-local metres (e/n); textures are shared uniforms
-   * so the drape material picks them up too. Pass null to disable.
+   * Show up to two baked orthomosaics (see tools/bake_ortho.py) inside their
+   * footprints. spec.bounds_m is in site-local metres (e/n); textures are
+   * shared uniforms so the drape material picks them up too. Pass [] to disable.
    */
-  async setOrtho(spec) {
-    if (!spec) {
-      this.uniforms.uOrthoOn.value = 0;
-      return;
+  async setOrthos(specs) {
+    specs = specs.filter(Boolean).slice(0, 2);
+    const loader = new THREE.TextureLoader();
+    for (let i = 0; i < 2; i++) {
+      const spec = specs[i] ?? null;
+      if (!spec) { this.uniforms["uOrthoOn" + i].value = 0; this.orthoSlots[i] = null; continue; }
+      if (this.orthoSlots[i] !== spec) {
+        if (!this.orthoTex.has(spec)) {
+          const [tex, mask] = await Promise.all([loader.loadAsync(spec.file), loader.loadAsync(spec.mask)]);
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.anisotropy = this.experience.renderer.instance.capabilities.getMaxAnisotropy();
+          mask.colorSpace = THREE.NoColorSpace;
+          mask.minFilter = mask.magFilter = THREE.NearestFilter;
+          mask.generateMipmaps = false;
+          this.orthoTex.set(spec, [tex, mask]);
+        }
+        const [tex, mask] = this.orthoTex.get(spec);
+        this.uniforms["uOrtho" + i].value = tex;
+        this.uniforms["uOrthoMask" + i].value = mask;
+        const b = spec.bounds_m;
+        this.uniforms["uOrthoMin" + i].value.set(b.e_min / METERS_PER_UNIT, -b.n_max / METERS_PER_UNIT);
+        this.uniforms["uOrthoMax" + i].value.set(b.e_max / METERS_PER_UNIT, -b.n_min / METERS_PER_UNIT);
+        this.orthoSlots[i] = spec;
+      }
+      this.uniforms["uOrthoOn" + i].value = 1;
     }
-    if (this.orthoSpec !== spec) {
-      const loader = new THREE.TextureLoader();
-      const [tex, mask] = await Promise.all([loader.loadAsync(spec.file), loader.loadAsync(spec.mask)]);
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.anisotropy = this.experience.renderer.instance.capabilities.getMaxAnisotropy();
-      mask.colorSpace = THREE.NoColorSpace;
-      mask.minFilter = mask.magFilter = THREE.NearestFilter;
-      mask.generateMipmaps = false;
-      this.uniforms.uOrtho.value = tex;
-      this.uniforms.uOrthoMask.value = mask;
-      const b = spec.bounds_m;
-      this.uniforms.uOrthoMin.value.set(b.e_min / METERS_PER_UNIT, -b.n_max / METERS_PER_UNIT);
-      this.uniforms.uOrthoMax.value.set(b.e_max / METERS_PER_UNIT, -b.n_min / METERS_PER_UNIT);
-      this.orthoSpec = spec;
-    }
-    this.uniforms.uOrthoOn.value = 1;
   }
 
   /** Lighting only — geometry exaggeration is World.model.scale.y. */

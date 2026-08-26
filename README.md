@@ -40,6 +40,21 @@ Everything is baked once into `static/` by two scripts — see `tools/`:
   the coverage mesh's height. The app drapes it on the mesh *and* the terrain
   inside its footprint (`ortho.jpg` + coverage mask); NAIP shows elsewhere.
 
+- `uv run tools/import_video.py data/<dir>/<video> --scan <id> --id <vid>` —
+  imports a **flight video**. Skydio MP4/LRV files carry no GPS track, but a
+  video recorded *during* a 3D scan is bracketed by the scan's geotagged
+  photos (µs capture clock in the XMP): start = `creation_time − duration`
+  (verified against photo content), pose interpolated at 1 Hz from the scan
+  samples. The video is re-encoded into 10 s, 540p, keyframe-aligned chunks
+  (`chunks/NNN.mp4`, ≤ ~2.5 MB each, so GitHub Pages serves them instantly)
+  plus a 1 fps contact strip per chunk. `--pin lat,lon,alt` places a video
+  with no trajectory source. The chunk/poster dirs under `static/` are
+  git-ignored (only the built copies in `docs/` are committed, ~130 MB per
+  video) — on a fresh clone, re-run the importer from `data/` before
+  `npm run build`, since the build empties `docs/`. Corrupt photos (a handful per SD card) are
+  tolerated by both importers: XMP is read from raw bytes and the embedded
+  preview stands in for the thumbnail.
+
 Real flight logs of other kinds should be converted to the same JSON shape
 (documented in `gen_flights.py`); the app reads `flights/index.json`.
 
@@ -49,14 +64,26 @@ Real flight logs of other kinds should be converted to the same JSON shape
 - `src/Experience/Terrain.js` — heightfield + imagery shader, `heightAt()`, hover probe
 - `src/Experience/FlightPath.js` — fat line + sample markers; brahma `isPath` hover/select
 - `src/Experience/SamplePanel.js` — canvas-textured info card (fields + image)
+- `src/Experience/VideoPath.js` — video flight: path cut into 10 s segments; hover a segment to
+  light it up (line, glow tube, ground swath = union of camera footprints) and play its clip,
+  with a drone marker riding the segment in sync. Shares the scan's trajectory, so the
+  selected flight owns the hover and its relatives are drawn subdued.
+- `src/Experience/VideoPanel.js` — SamplePanel with a `<video>` well, progress bar, contact strip
 - `src/Experience/World.js` — wiring + lil-gui (flight dropdown, terrain sliders)
 
 ## Debug panel
 
 `#debug` (on by default in `script.js` for now): **Flights → Sample path**
-switches between missions; click / trigger pins the panel.
+switches between missions (a scan brings the videos shot during it and vice
+versa); click / trigger pins the panel. **Videos → Play whole flight** makes a
+pinned clip auto-advance through the segments; **Ground swath** toggles the
+footprint overlay. Hovering a video segment also lights up the scan photos
+captured in that window, and the hovered segment is shared with other users
+in the session (brahma callout relay).
 
 ## Roadmap
+
+- `S1009741.MP4` (June 21, 4K) has no scan bracketing it — needs a Skydio flight log, or `--pin`
 
 - Ortho quality: occlusion-aware / multi-photo blending (currently best-centred photo wins, no seam feathering)
 - Gaussian splat at a sample point (Spark `SplatMesh`, as in `coral`)

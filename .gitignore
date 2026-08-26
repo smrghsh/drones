@@ -1,3 +1,7 @@
 node_modules/
 tools/cache/
 data/
+.DS_Store
+# video chunks are large; the built copies in docs/ are what Pages serves — regenerate with tools/import_video.py
+static/flights/*/chunks/
+static/flights/*/posters/

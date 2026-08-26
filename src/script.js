@@ -22,6 +22,7 @@ const experience = new Experience({
 });
 
 experience.world = new World();
+window.experience = experience; // handy for console debugging / automation
 
 // Loading overlay — hides once every source in sources.js has loaded
 // (World hides the #loading overlay once terrain + flights are fetched.)

@@ -32,9 +32,41 @@ CRS = f"+proj=aeqd +lat_0={site['lat']} +lon_0={site['lon']} +datum=WGS84 +units
 to_local = Transformer.from_crs("EPSG:4326", CRS, always_xy=True)
 to_wgs = Transformer.from_crs(CRS, "EPSG:4326", always_xy=True)
 
+def raw_xmp(path):
+    """XMP packet straight from the file bytes: survives photos whose JPEG stream is corrupt."""
+    b = Path(path).read_bytes(); i = b.find(b"<x:xmpmeta"); j = b.find(b"</x:xmpmeta>")
+    return b[i:j].decode("utf-8", "ignore") if i >= 0 else ""
+
 def xmp_tags(path):
-    x = Image.open(path).info.get("xmp", b"").decode("utf-8", "ignore")
-    return dict(re.findall(r'drone-skydio:(\w+)="([^"]*)"', x))
+    x = raw_xmp(path)
+    tags = dict(re.findall(r'drone-skydio:(\w+)="([^"]*)"', x))
+    tags.update(re.findall(r"<drone-skydio:(\w+)>([^<]*)</drone-skydio:\1>", x))
+    # nested vectors (VehicleOrientationNED etc.) -> "Tag.X"
+    for m in re.finditer(r'<drone-skydio:(\w+) rdf:parseType="Resource">(.*?)</drone-skydio:\1>', x, re.S):
+        for k, v in re.findall(r"<drone-skydio:(\w+)>([^<]*)<", m.group(2)): tags[f"{m.group(1)}.{k}"] = v
+    return tags
+
+def utc_of(tags):
+    """Absolute UTC seconds of capture from the vehicle clock (microseconds since takeoff)."""
+    try:
+        return (int(tags["TakeoffUclock"]) + int(tags["CaptureUtime"]) - int(tags["TakeoffUtime"])) / 1e6
+    except KeyError:
+        return None
+
+def thumbnail(src, dst, size=(480, 360)):
+    """480x360 JPEG; falls back to the embedded EXIF preview when the main stream is corrupt."""
+    try:
+        im = Image.open(src); im.draft("RGB", (im.width // 8, im.height // 8)); im = im.convert("RGB")
+    except Exception:
+        b = Path(src).read_bytes(); starts = [m.start() for m in re.finditer(b"\xff\xd8\xff", b)]
+        im = None
+        for s0 in starts[1:]:
+            try:
+                import io; im = Image.open(io.BytesIO(b[s0:])); im.load(); im = im.convert("RGB"); break
+            except Exception: im = None
+        if im is None: im = Image.new("RGB", size, (40, 44, 56))
+        print(f"  ! {Path(src).name}: corrupt JPEG, using embedded preview" if starts[1:] else f"  ! {Path(src).name}: corrupt, placeholder")
+    im.resize(size).save(dst, quality=78)
 
 def gltf_to_glb(src: Path, dst: Path):
     g = json.loads(src.read_text())
@@ -93,27 +125,33 @@ def main():
         tg = tags[n]; tsec = (int(tg.get("CaptureUtime", 0)) - t0) / 1e6
         waypoints.append(dict(lat=round(lat, 7), lon=round(lon, 7), alt_msl=round(alt, 2), t=round(tsec, 1)))
         thumb = out / f"{i:03d}.jpg"
-        if not thumb.exists():
-            im = Image.open(D / n); im.draft("RGB", (im.width // 8, im.height // 8))
-            im.convert("RGB").resize((480, 360)).save(thumb, quality=78)
+        if not thumb.exists(): thumbnail(D / n, thumb)
         samples.append(dict(
-            id=n.replace(".JPG", ""), t=round(tsec, 1), lat=round(lat, 7), lon=round(lon, 7),
+            id=n.replace(".JPG", ""), t=round(tsec, 1), utc=utc_of(tg), lat=round(lat, 7), lon=round(lon, 7),
             alt_msl=round(alt, 2), alt_agl=None,
-            heading=round(float(tg.get("Yaw", kappa)), 1), gimbal_pitch=round(float(tg.get("Pitch", 0)), 1),
-            roll=round(float(tg.get("Roll", 0)), 1), omega=round(omega, 2), phi=round(phi, 2), kappa=round(kappa, 2),
+            # camera orientation in NED: yaw cw from north, pitch <0 = looking down
+            heading=round(float(tg.get("CameraOrientationNED.Yaw", kappa)), 1),
+            gimbal_pitch=round(float(tg.get("CameraOrientationNED.Pitch", 0)), 1),
+            roll=round(float(tg.get("CameraOrientationNED.Roll", 0)), 1), omega=round(omega, 2), phi=round(phi, 2), kappa=round(kappa, 2),
             image=f"./flights/{fid}/{i:03d}.jpg", source=n, notes="Skydio 3D Scan"))
         if i % 50 == 0: print(f"  {i}/{len(names)}")
     gltf_to_glb(D / "coverage_within_params.gltf", out / "mesh.glb")
 
     dt = D.name.split("__")[1].replace("-", ":", 2).replace("+00-00", "+00:00") if "__" in D.name else ""
+    utcs = [s["utc"] for s in samples if s["utc"]]
     flight = dict(
         id=fid, name=a.name or f"{D.name.split('__')[0]} — Skydio 3D Scan",
         drone="Skydio 2+", camera="Skydio 2+ 12MP", date=dt, agl_m=None, kind="scan",
+        start_utc=min(utcs) if utcs else None, end_utc=max(utcs) if utcs else None,
         panel_fields=["id", "t", "lat", "lon", "alt_msl", "heading", "gimbal_pitch", "roll", "source"],
         mesh=dict(file=f"./flights/{fid}/mesh.glb", origin=dict(lat=lat0, lon=lon0, alt_msl=z0), yaw_deg=yaw,
                   fit_residual_m=resid, poses=len(pairs)),
         waypoints=waypoints, samples=samples)
-    (FLIGHTS / f"{fid}.json").write_text(json.dumps(flight))
+    prev = FLIGHTS / f"{fid}.json"
+    if prev.exists():  # keep a baked orthomosaic (bake_ortho.py) across re-imports
+        old = json.loads(prev.read_text())
+        if "ortho" in old: flight["ortho"] = old["ortho"]
+    prev.write_text(json.dumps(flight))
     idx_path = FLIGHTS / "index.json"; idx = json.loads(idx_path.read_text()) if idx_path.exists() else []
     idx = [e for e in idx if e["id"] != fid] + [dict(id=fid, name=flight["name"], file=f"./flights/{fid}.json")]
     idx_path.write_text(json.dumps(idx, indent=2))

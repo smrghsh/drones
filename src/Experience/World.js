@@ -4,6 +4,8 @@ import { setSite, MODEL_Y, settings } from "./domain.js";
 import Terrain from "./Terrain.js";
 import FlightPath from "./FlightPath.js";
 import SamplePanel from "./SamplePanel.js";
+import VideoPath from "./VideoPath.js";
+import VideoPanel from "./VideoPanel.js";
 
 const PATH_COLORS = [0xffb347, 0x5ec8ff, 0xff6b9d, 0x9dff6b];
 
@@ -32,11 +34,16 @@ export default class World {
 
     this.panel = new SamplePanel();
     this.model.add(this.panel);
+    this.videoPanel = new VideoPanel();
+    this.model.add(this.videoPanel);
 
     const index = await fetch("./flights/index.json").then((r) => r.json());
     const flights = await Promise.all(index.map((f) => fetch(f.file).then((r) => r.json())));
     flights.forEach((flight, i) => {
-      const path = new FlightPath(flight, this.panel, PATH_COLORS[i % PATH_COLORS.length]);
+      const color = PATH_COLORS[i % PATH_COLORS.length];
+      const path = flight.kind === "video"
+        ? new VideoPath(flight, this.videoPanel, color)
+        : new FlightPath(flight, this.panel, color);
       this.model.add(path);
       this.paths.push(path);
     });
@@ -49,12 +56,37 @@ export default class World {
   }
 
   setActiveFlight(id) {
-    for (const p of this.paths) p.setActive(id === "All" || p.flight.id === id);
+    // A scan brings the videos recorded during it; a video brings its scan.
+    // Videos share their scan's trajectory, so only one of them owns the hover:
+    // the selected flight is emphasised (hoverable), its relatives are subdued.
     const target = this.paths.find((p) => p.flight.id === id);
+    const family = new Set([id, target?.flight.scan]);
+    for (const p of this.paths) if (p.flight.scan === id) family.add(p.flight.id);
+    for (const p of this.paths) {
+      const isVideo = p.flight.kind === "video";
+      const show = id === "All" || family.has(p.flight.id);
+      const emphasis = id === "All" ? (isVideo ? 0.5 : 1) : p.flight.id === id ? 1 : 0.5;
+      p.setActive(show, emphasis);
+    }
     this.focus(target);
-    // Orthomosaic of whichever flight has one and is showing (first wins).
-    const withOrtho = this.paths.find((p) => p.flight.ortho && (id === "All" || p.flight.id === id));
-    this.terrain.setOrtho(withOrtho?.flight.ortho ?? null);
+    this.terrain.setOrthos(this.paths.filter((p) => p.visible && p.flight.ortho).map((p) => p.flight.ortho));
+  }
+
+  /** A video segment was highlighted (k = -1: cleared): light up the scan photos shot during it. */
+  onVideoSegment(videoPath, k) {
+    const scan = this.paths.find((p) => p.flight.id === videoPath.flight.scan);
+    if (!scan?.highlightWindow) return;
+    if (k < 0) { scan.highlightWindow(null); return; }
+    const c = videoPath.flight.chunks[k], u0 = videoPath.flight.start_utc;
+    scan.highlightWindow(u0 + c.t0, u0 + c.t1);
+  }
+
+  /** Another user's hovered video segment (brahma callout relay). */
+  onCalloutUpdate(data) {
+    const pl = data?.payload;
+    if (!pl?.video) return;
+    const path = this.paths.find((p) => p.flight.id === pl.video);
+    path?.setRemoteSegment?.(data.visible ? pl.segment : -1);
   }
 
 
@@ -63,7 +95,7 @@ export default class World {
     settings.verticalExaggeration = v;
     this.model.scale.y = v;
     this.terrain.setExaggeration(v);
-    this.panel.scale.set(this.panel.baseScale, this.panel.baseScale / v, this.panel.baseScale);
+    for (const p of [this.panel, this.videoPanel]) p.scale.set(p.baseScale, p.baseScale / v, p.baseScale);
   }
 
   /** Move the orbit camera to frame a path (or the whole model when none). */
@@ -86,11 +118,18 @@ export default class World {
     const f = ui.addFolder("Flights");
     const options = { All: "All" };
     for (const p of this.paths) options[p.flight.name] = p.flight.id;
-    const first = this.paths.find((p) => p.flight.kind === "scan")?.flight.id ?? "All";
-    this.params = { flight: first, exaggeration: 1.0, imagery: 1.0 };
+    const scans = this.paths.filter((p) => p.flight.kind === "scan");
+    const first = scans.at(-1)?.flight.id ?? "All"; // newest scan
+    this.params = { flight: first, exaggeration: 1.0, imagery: 1.0, playAll: false, swath: true };
     this.setActiveFlight(first);
     f.add(this.params, "flight", options).name("Sample path").onChange((v) => this.setActiveFlight(v));
-    f.add({ unpin: () => this.panel.setPinned(false) }, "unpin").name("Unpin panel");
+    f.add({ unpin: () => { this.panel.setPinned(false); this.videoPanel.setPinned(false); } }, "unpin").name("Unpin panel");
+    const videos = this.paths.filter((p) => p.flight.kind === "video");
+    if (videos.length) {
+      const v = ui.addFolder("Videos");
+      v.add(this.params, "playAll").name("Play whole flight (when pinned)").onChange((on) => videos.forEach((p) => (p.playAll = on)));
+      v.add(this.params, "swath").name("Ground swath").onChange((on) => videos.forEach((p) => { p.swathOn = on; p.swath.visible = on && p.segment >= 0; }));
+    }
     const t = ui.addFolder("Terrain");
     t.add(this.params, "exaggeration", 0.5, 6, 0.1).name("Vertical ×").onChange((v) => this.setExaggeration(v));
     t.add(this.params, "imagery", 0, 1, 0.05).name("Imagery mix").onChange((v) => {
@@ -100,5 +139,6 @@ export default class World {
 
   update() {
     this.panel?.update();
+    this.videoPanel?.update();
   }
 }

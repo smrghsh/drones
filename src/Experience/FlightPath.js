@@ -59,6 +59,7 @@ export default class FlightPath extends THREE.Group {
     inst.renderOrder = 2;
     this.samples = inst;
     this.add(inst);
+    this.highlightWindow(null);
 
     if (flight.mesh) this.loadMesh(flight.mesh);
 
@@ -114,6 +115,25 @@ export default class FlightPath extends THREE.Group {
   }
 
 
+  /**
+   * Brighten the sample markers captured between utc0 and utc1 (a video
+   * segment); everything else keeps the path colour. null clears.
+   */
+  highlightWindow(utc0, utc1) {
+    const inst = this.samples, n = this.flight.samples.length;
+    const hot = new THREE.Color(0xffffff), base = this.color, dimmed = this.color.clone().multiplyScalar(0.45);
+    const active = utc0 != null;
+    let count = 0;
+    for (let i = 0; i < n; i++) {
+      const u = this.flight.samples[i].utc;
+      const on = active && u != null && u >= utc0 && u <= utc1;
+      if (on) count++;
+      inst.setColorAt(i, on ? hot : active ? dimmed : base);
+    }
+    inst.instanceColor.needsUpdate = true;
+    return count;
+  }
+
   /** World-space bounding box of the path, for camera focusing. */
   bounds() {
     const box = new THREE.Box3().setFromPoints(this.samplePositions);
@@ -164,12 +184,22 @@ export default class FlightPath extends THREE.Group {
     return { sample: this.flight.samples[best], position: this.samplePositions[best], index: best };
   }
 
-  setActive(active) {
+  /**
+   * Show/hide; `emphasis` < 1 draws the path subdued and takes it out of the
+   * pointer's selectable set (a video recorded during this scan shares its
+   * trajectory, so only one of them can own the hover at a time).
+   */
+  setActive(active, emphasis = 1) {
     this.visible = active;
+    const selectable = active && emphasis >= 1;
     const list = this.experience.selectableObjects;
     const i = list.indexOf(this);
-    if (active && i < 0) list.push(this);
-    if (!active && i >= 0) list.splice(i, 1);
-    if (!active && this.hover) this.onUnhover();
+    if (selectable && i < 0) list.push(this);
+    if (!selectable && i >= 0) list.splice(i, 1);
+    if (!selectable && this.hover) this.onUnhover();
+    this.material.opacity = 0.95 * (emphasis < 1 ? 0.35 : 1);
+    this.samples.material.transparent = true;
+    this.samples.material.opacity = emphasis < 1 ? 0.35 : 1;
+    this.samples.material.needsUpdate = true;
   }
 }

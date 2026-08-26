@@ -28,7 +28,8 @@ CRS = f"+proj=aeqd +lat_0={site['lat']} +lon_0={site['lon']} +datum=WGS84 +units
 to_local = Transformer.from_crs("EPSG:4326", CRS, always_xy=True)
 
 def xmp(path):
-    x = Image.open(path).info.get("xmp", b"").decode("utf-8", "ignore")
+    b = Path(path).read_bytes(); i = b.find(b"<x:xmpmeta"); j = b.find(b"</x:xmpmeta>")
+    x = b[i:j].decode("utf-8", "ignore")
     def vec(tag, ns="drone-skydio-3dscan"):
         m = re.search(rf"<{ns}:{tag}[^>]*>(.*?)</{ns}:{tag}>", x, re.S)
         return {k: float(v) for k, v in re.findall(rf"<{ns}:(\w)>([-\d.e]+)</{ns}:\1>", m.group(1))}
@@ -120,7 +121,10 @@ def main():
         cur = best[rows, cols][sub]
         better = score < cur
         if not better.any(): continue
-        im = Image.open(D / name); im.draft("RGB", (Wimg // 2, Himg // 2)); im = im.convert("RGB")
+        try:
+            im = Image.open(D / name); im.draft("RGB", (Wimg // 2, Himg // 2)); im = im.convert("RGB")
+        except Exception:
+            print(f"  ! {name}: corrupt JPEG, skipped"); continue
         if im.size != (Wimg // 2, Himg // 2): im = im.resize((Wimg // 2, Himg // 2))
         px = np.asarray(im)
         ui = np.clip((u[better] * SCALE).astype(int), 0, px.shape[1] - 1); vi = np.clip((v[better] * SCALE).astype(int), 0, px.shape[0] - 1)
