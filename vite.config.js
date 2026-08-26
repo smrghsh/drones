@@ -14,6 +14,10 @@ export default defineConfig({
   base: "./",
   plugins: ssl ? [basicSsl()] : [],
   resolve: { dedupe: ["three"] }, // brahma-xr and the app must share one three
+  // Serve brahma-xr from source instead of Vite's pre-bundled cache: the cache
+  // is keyed on the lockfile, so it kept serving the unpatched copy after
+  // patch-package fixed node_modules (the "toHexString" Loading hang).
+  optimizeDeps: { exclude: ["brahma-xr"] },
   server: {
     host: true, // reachable from headsets on your LAN
     https: ssl,
