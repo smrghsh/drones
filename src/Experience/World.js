@@ -118,8 +118,7 @@ export default class World {
     const f = ui.addFolder("Flights");
     const options = { All: "All" };
     for (const p of this.paths) options[p.flight.name] = p.flight.id;
-    const scans = this.paths.filter((p) => p.flight.kind === "scan");
-    const first = scans.at(-1)?.flight.id ?? "All"; // newest scan
+    const first = "All"; // every scan visible; pick one (or a video) in the dropdown to hover it
     this.params = { flight: first, exaggeration: 1.0, imagery: 1.0, playAll: false, swath: true };
     this.setActiveFlight(first);
     f.add(this.params, "flight", options).name("Sample path").onChange((v) => this.setActiveFlight(v));
