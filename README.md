@@ -1,7 +1,9 @@
 # UCSC Farm — drone flights (XR)
 
 WebXR visualization of the UC Santa Cruz Farm (CASFS): a satellite-draped
-lidar terrain model with drone flight paths. Hover (mouse) or point (VR
+lidar terrain model (1 m farm-wide, 0.35 m under the scans) with real Skydio
+3D-scan flights, their videos, and three 3D models per scan (Skydio coverage
+mesh, our photogrammetry mesh, a Gaussian splat) switched from an in-scene menu. Hover (mouse) or point (VR
 controller) at a path to open a sample panel — metadata fields plus the image
 captured at the nearest sample — and at the ground to read lat/lon + elevation.
 Built on [brahma-xr](https://github.com/smrghsh/brahma) via `create-brahma-xr`.
@@ -26,8 +28,12 @@ Everything is baked once into `static/` by two scripts — see `tools/`:
   Santa Cruz County 2020 lidar DSM (3DEP, 1 m) from Microsoft Planetary
   Computer (anonymously signed STAC), reprojected into a local tangent plane
   centred on the farm → `static/farm/{imagery.jpg,height.png,site.json}`.
-- `uv run tools/gen_flights.py` — three **synthetic** sample missions
-  (`static/flights/`). Sample "images" are NAIP crops under the drone.
+- `uv run tools/prep_detail.py [--gsd 0.35]` — **high-resolution terrain patch**
+  under the scans from the USGS 3DEP lidar *point cloud* (COPC via Planetary
+  Computer, anonymously signed): highest return per cell → `static/farm/detail_height.png`
+  + `detail.json`. The app carves the coarse terrain out inside the patch.
+- `uv run tools/gen_flights.py` — three **synthetic** sample missions (no longer
+  shipped; handy for testing the flight JSON shape).
 - `uv run tools/import_skydio.py data/<scan-dir>` — imports a real **Skydio
   3D Scan** export (Pix4D geolocation CSV + photos + `scan_output.pbuf` +
   `coverage_within_params.gltf`): every photo becomes a sample with a
@@ -55,6 +61,13 @@ Everything is baked once into `static/` by two scripts — see `tools/`:
   tolerated by both importers: XMP is read from raw bytes and the embedded
   preview stands in for the thumbnail.
 
+- `uv run tools/reconstruct.py data/<scan-dir> --id <id> --stage all` — our own
+  **3D reconstruction** of a scan from its photos: COLMAP 4 SfM (CPU SIFT,
+  GPS-spatial matching, ENU-aligned to the geotags), OpenMVS dense cloud →
+  mesh → texture (`recon.glb`), and a Brush Gaussian splat (`splat.ply`,
+  rendered with Spark). Each output is registered on the flight JSON with its
+  ENU origin/offset so it drops into the same frame as the coverage mesh.
+
 Real flight logs of other kinds should be converted to the same JSON shape
 (documented in `gen_flights.py`); the app reads `flights/index.json`.
 
@@ -69,6 +82,8 @@ Real flight logs of other kinds should be converted to the same JSON shape
   with a drone marker riding the segment in sync. Shares the scan's trajectory, so the
   selected flight owns the hover and its relatives are drawn subdued.
 - `src/Experience/VideoPanel.js` — SamplePanel with a `<video>` well, progress bar, contact strip
+- `src/Experience/ScanMenu.js` — in-scene menu beside each scan: coverage / photogrammetry / splat /
+  terrain-only, plus "ortho on terrain" (off = no doubled flower beds under a floating mesh)
 - `src/Experience/World.js` — wiring + lil-gui (flight dropdown, terrain sliders)
 
 ## Debug panel

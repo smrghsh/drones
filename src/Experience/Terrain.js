@@ -5,13 +5,17 @@ import { METERS_PER_UNIT, settings, getSite, sceneToMetres, fromLocalMetres } fr
 const vertexShader = /* glsl */ `
 uniform float uZCenter;
 uniform float uHeightScale;
+uniform vec2 uOrigin;     // model-frame xz of this mesh's centre
+uniform float uSiteSize;  // farm-wide imagery edge, scene units
 varying vec2 vUv;
 varying float vHeight;
 varying vec2 vXZ;
+varying vec2 vUvImagery;
 void main(){
   vUv = uv;
   vHeight = position.z / uHeightScale + uZCenter;  // vertices are displaced on the CPU
-  vXZ = vec2(position.x, -position.y);             // model-frame x/z (plane is rotated -PI/2 about X)
+  vXZ = uOrigin + vec2(position.x, -position.y);   // model-frame x/z (plane is rotated -PI/2 about X)
+  vUvImagery = vec2(vXZ.x / uSiteSize + 0.5, 0.5 - vXZ.y / uSiteSize);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }`;
 
@@ -38,10 +42,11 @@ bool orthoAt(sampler2D tex, sampler2D mask, float on, vec2 mn, vec2 mx, vec2 xz,
   col = texture2D(tex, ouv).rgb;
   return true;
 }
-vec3 groundColor(vec2 xz, vec2 uvImagery){
+// gate: (1,1) on draped meshes; the terrain passes its per-scan "ortho on terrain" flags
+vec3 groundColor(vec2 xz, vec2 uvImagery, vec2 gate){
   vec3 col = texture2D(uImagery, uvImagery).rgb;
-  if (!orthoAt(uOrtho1, uOrthoMask1, uOrthoOn1, uOrthoMin1, uOrthoMax1, xz, col))
-    orthoAt(uOrtho0, uOrthoMask0, uOrthoOn0, uOrthoMin0, uOrthoMax0, xz, col);
+  if (!orthoAt(uOrtho1, uOrthoMask1, uOrthoOn1 * gate.y, uOrthoMin1, uOrthoMax1, xz, col))
+    orthoAt(uOrtho0, uOrthoMask0, uOrthoOn0 * gate.x, uOrthoMin0, uOrthoMax0, xz, col);
   return col;
 }`;
 
@@ -52,18 +57,24 @@ uniform float uMetresPerTexel;
 uniform float uExaggeration;
 uniform vec3 uSun;
 uniform float uImageryMix;
+uniform vec2 uOrthoGate;
+uniform vec2 uCutMin;     // model-frame xz box carved out of this mesh (the detail patch lives there)
+uniform vec2 uCutMax;
+uniform sampler2D uImageryRef; // unused on the coarse mesh; keeps the uniform set uniform
 varying vec2 vUv;
 varying float vHeight;
 varying vec2 vXZ;
+varying vec2 vUvImagery;
 float decode(vec3 c){ return (c.r*255.0*256.0 + c.g*255.0 + c.b*255.0/256.0) - 32768.0; }
 void main(){
+  if (all(greaterThan(vXZ, uCutMin)) && all(lessThan(vXZ, uCutMax))) discard;
   float zl = decode(texture2D(uHeight, vUv - vec2(uTexel,0.0)).rgb);
   float zr = decode(texture2D(uHeight, vUv + vec2(uTexel,0.0)).rgb);
   float zd = decode(texture2D(uHeight, vUv - vec2(0.0,uTexel)).rgb);
   float zu = decode(texture2D(uHeight, vUv + vec2(0.0,uTexel)).rgb);
   vec3 n = normalize(vec3(-(zr-zl)*uExaggeration, -(zu-zd)*uExaggeration, 2.0*uMetresPerTexel));
   float light = 0.45 + 0.65 * max(dot(n, normalize(uSun)), 0.0);
-  vec3 img = groundColor(vXZ, vUv);
+  vec3 img = groundColor(vXZ, vUvImagery, uOrthoGate);
   vec3 hyps = mix(vec3(0.16,0.24,0.14), vec3(0.75,0.68,0.5), smoothstep(80.0, 175.0, vHeight));
   vec3 col = mix(hyps, img, uImageryMix) * light;
   gl_FragColor = vec4(col, 1.0);
@@ -95,7 +106,7 @@ void main(){
   vec3 sun = normalize(uSun);
   float ndl = dot(n, sun);
   float light = 0.32 + 0.85 * max(ndl, 0.0) + 0.15 * max(-n.y, 0.0);  // strong key light, faint bounce on under-faces
-  vec3 col = groundColor(vXZ, vUv) * light;
+  vec3 col = groundColor(vXZ, vUv, vec2(1.0)) * light;
   gl_FragColor = vec4(col, 1.0);
   #include <colorspace_fragment>
 }`;
@@ -219,6 +230,11 @@ export default class Terrain extends THREE.Group {
       uExaggeration: { value: 1 },
       uSun: { value: new THREE.Vector3(-0.6, 0.55, 0.45) }, // lowish sun so relief reads
       uImageryMix: { value: 1.0 },
+      uOrthoGate: { value: new THREE.Vector2(1, 1) },
+      uOrigin: { value: new THREE.Vector2(0, 0) },
+      uSiteSize: { value: this.size },
+      uCutMin: { value: new THREE.Vector2(1e9, 1e9) },
+      uCutMax: { value: new THREE.Vector2(1e9, 1e9) },
       uOrtho0: { value: null }, uOrthoMask0: { value: null }, uOrthoOn0: { value: 0 },
       uOrthoMin0: { value: new THREE.Vector2() }, uOrthoMax0: { value: new THREE.Vector2() },
       uOrtho1: { value: null }, uOrthoMask1: { value: null }, uOrthoOn1: { value: 0 },
@@ -256,7 +272,51 @@ export default class Terrain extends THREE.Group {
     base.raycast = () => {};
     this.base = base;
     this.add(base);
+    await this.loadDetail();
     return this;
+  }
+
+  /**
+   * Nested high-resolution patch (tools/prep_detail.py: 3DEP lidar points
+   * rasterised at ~0.35 m) under the scans. Same shader; the coarse mesh is
+   * carved out inside its footprint and heightAt() prefers it.
+   */
+  async loadDetail() {
+    const meta = await fetch("./farm/detail.json").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    if (!meta) return;
+    const bmp = await fetch("./farm/detail_height.png").then((r) => r.blob())
+      .then((b) => createImageBitmap(b, { colorSpaceConversion: "none", premultiplyAlpha: "none" }));
+    const c = new OffscreenCanvas(bmp.width, bmp.height);
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(bmp, 0, 0);
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    const n = c.width;
+    const heights = new Float32Array(n * n);
+    for (let i = 0; i < heights.length; i++) heights[i] = d[i * 4] * 256 + d[i * 4 + 1] + d[i * 4 + 2] / 256 - 32768;
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.NoColorSpace; tex.minFilter = tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = false;
+    const size = meta.size_m / METERS_PER_UNIT;
+    const geom = new THREE.PlaneGeometry(size, size, n - 1, n - 1);
+    const pos = geom.attributes.position;
+    for (let i = 0; i < pos.count; i++) pos.setZ(i, (heights[i] - this.site.z_center) / METERS_PER_UNIT);
+    pos.needsUpdate = true; geom.computeBoundingSphere();
+    const ox = meta.center_e / METERS_PER_UNIT, oz = -meta.center_n / METERS_PER_UNIT;
+    const uniforms = {
+      ...this.uniforms,
+      uHeight: { value: tex }, uTexel: { value: 1 / n }, uMetresPerTexel: { value: meta.gsd_m },
+      uOrigin: { value: new THREE.Vector2(ox, oz) },
+      uCutMin: { value: new THREE.Vector2(1e9, 1e9) }, uCutMax: { value: new THREE.Vector2(1e9, 1e9) },
+    };
+    const mesh = new THREE.Mesh(geom, new THREE.ShaderMaterial({ vertexShader, fragmentShader, uniforms }));
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(ox, 0, oz);
+    this.add(mesh);
+    this.detail = { meta, heights, n, mesh, half: meta.size_m / 2 };
+    // carve the coarse mesh (slightly inset so the seam is hidden under the patch edge)
+    const inset = meta.gsd_m * 2 / METERS_PER_UNIT;
+    this.uniforms.uCutMin.value.set(ox - size / 2 + inset, oz - size / 2 + inset);
+    this.uniforms.uCutMax.value.set(ox + size / 2 - inset, oz + size / 2 - inset);
+    console.log(`terrain detail: ${meta.size_m} m @ ${meta.gsd_m} m (${n}x${n})`);
   }
 
   /** Material that drapes the aerial imagery onto any mesh placed in the model frame. */
@@ -281,11 +341,13 @@ export default class Terrain extends THREE.Group {
    * footprints. spec.bounds_m is in site-local metres (e/n); textures are
    * shared uniforms so the drape material picks them up too. Pass [] to disable.
    */
-  async setOrthos(specs) {
-    specs = specs.filter(Boolean).slice(0, 2);
+  async setOrthos(entries) {
+    entries = entries.filter(Boolean).slice(0, 2);
     const loader = new THREE.TextureLoader();
+    const gate = this.uniforms.uOrthoGate.value;
     for (let i = 0; i < 2; i++) {
-      const spec = specs[i] ?? null;
+      const spec = entries[i]?.spec ?? null;
+      gate.setComponent(i, entries[i]?.onTerrain === false ? 0 : 1);
       if (!spec) { this.uniforms["uOrthoOn" + i].value = 0; this.orthoSlots[i] = null; continue; }
       if (this.orthoSlots[i] !== spec) {
         if (!this.orthoTex.has(spec)) {
@@ -318,6 +380,14 @@ export default class Terrain extends THREE.Group {
   /** Ground elevation (m MSL) at local metres east/north; bilinear. */
   heightAt(e, n) {
     if (!this.heights) return this.site.z_center;
+    const D = this.detail;
+    if (D && Math.abs(e - D.meta.center_e) < D.half && Math.abs(n - D.meta.center_n) < D.half) {
+      const fx = THREE.MathUtils.clamp((e - (D.meta.center_e - D.half)) / D.meta.gsd_m, 0, D.n - 1.001);
+      const fy = THREE.MathUtils.clamp(((D.meta.center_n + D.half) - n) / D.meta.gsd_m, 0, D.n - 1.001);
+      const x0 = Math.floor(fx), y0 = Math.floor(fy), tx = fx - x0, ty = fy - y0;
+      const h = (x, y) => D.heights[y * D.n + x];
+      return (h(x0, y0) * (1 - tx) + h(x0 + 1, y0) * tx) * (1 - ty) + (h(x0, y0 + 1) * (1 - tx) + h(x0 + 1, y0 + 1) * tx) * ty;
+    }
     const S = this.site.size_m;
     const fx = THREE.MathUtils.clamp(((e + S / 2) / S) * (this.hw - 1), 0, this.hw - 1.001);
     const fy = THREE.MathUtils.clamp(((S / 2 - n) / S) * (this.hh - 1), 0, this.hh - 1.001);

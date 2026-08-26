@@ -1,0 +1,13 @@
+diff --git a/node_modules/brahma-xr/src/networking/User.js b/node_modules/brahma-xr/src/networking/User.js
+index 3db7e7b..7ff1ee0 100644
+--- a/node_modules/brahma-xr/src/networking/User.js
++++ b/node_modules/brahma-xr/src/networking/User.js
+@@ -6,7 +6,7 @@ export default class User {
+     this.debug = this.experience.debug;
+     this.parameters = {
+       userName: "User",
+-      color: null,
++      color: "#ffffff", // overwritten by the server on welcome; lil-gui addColor rejects null
+     };
+     if (this.debug?.active) {
+       this.debugFolder = this.debug.ui.addFolder("user");

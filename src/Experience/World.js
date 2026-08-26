@@ -69,7 +69,20 @@ export default class World {
       p.setActive(show, emphasis);
     }
     this.focus(target);
-    this.terrain.setOrthos(this.paths.filter((p) => p.visible && p.flight.ortho).map((p) => p.flight.ortho));
+    this.refreshOrthos();
+  }
+
+  /** A scan's model/ortho state changed (menu, dropdown or another user): keep the dropdowns in sync. */
+  onModelChanged(path) {
+    if (!this.params || !this.modelControls?.[path.flight.id]) return;
+    this.params["model_" + path.flight.id] = path.representation;
+    this.params["orthoTerrain_" + path.flight.id] = path.orthoOnTerrain;
+    for (const c of this.modelControls[path.flight.id]) c.updateDisplay();
+  }
+
+  /** Orthomosaics of the scans showing; each scan's menu decides whether it also drapes the terrain. */
+  refreshOrthos() {
+    this.terrain.setOrthos(this.paths.filter((p) => p.visible && p.flight.ortho).map((p) => ({ spec: p.flight.ortho, onTerrain: p.orthoOnTerrain })));
   }
 
   /** A video segment was highlighted (k = -1: cleared): light up the scan photos shot during it. */
@@ -84,6 +97,11 @@ export default class World {
   /** Another user's hovered video segment (brahma callout relay). */
   onCalloutUpdate(data) {
     const pl = data?.payload;
+    if (pl?.menu) { // another user switched a scan's model
+      const scan = this.paths.find((p) => p.flight.id === pl.menu);
+      if (scan) { if (pl.representation !== scan.representation) scan.setRepresentation(pl.representation); if (pl.orthoTerrain !== scan.orthoOnTerrain) scan.setOrthoOnTerrain(pl.orthoTerrain); }
+      return;
+    }
     if (!pl?.video) return;
     const path = this.paths.find((p) => p.flight.id === pl.video);
     path?.setRemoteSegment?.(data.visible ? pl.segment : -1);
@@ -123,6 +141,25 @@ export default class World {
     this.setActiveFlight(first);
     f.add(this.params, "flight", options).name("Sample path").onChange((v) => this.setActiveFlight(v));
     f.add({ unpin: () => { this.panel.setPinned(false); this.videoPanel.setPinned(false); } }, "unpin").name("Unpin panel");
+    // one "Model" dropdown per scan, mirroring the in-scene ScanMenu
+    const scans = this.paths.filter((p) => p.flight.kind === "scan");
+    this.modelControls = {};
+    if (scans.length) {
+      const m = ui.addFolder("Scan models");
+      for (const p of scans) {
+        const opts = { "Coverage mesh (Skydio)": "coverage" };
+        if (p.flight.recon) opts["Photogrammetry mesh"] = "recon";
+        if (p.flight.splat) opts["Gaussian splat"] = "splat";
+        opts["Terrain only"] = "none";
+        this.params["model_" + p.flight.id] = p.representation;
+        this.params["orthoTerrain_" + p.flight.id] = p.orthoOnTerrain;
+        const short = p.flight.name.replace(/ — .*/, "");
+        this.modelControls[p.flight.id] = [
+          m.add(this.params, "model_" + p.flight.id, opts).name(short + " · model").onChange((v) => p.setRepresentation(v)),
+          m.add(this.params, "orthoTerrain_" + p.flight.id).name(short + " · ortho on terrain").onChange((v) => p.setOrthoOnTerrain(v)),
+        ];
+      }
+    }
     const videos = this.paths.filter((p) => p.flight.kind === "video");
     if (videos.length) {
       const v = ui.addFolder("Videos");
@@ -139,5 +176,6 @@ export default class World {
   update() {
     this.panel?.update();
     this.videoPanel?.update();
+    for (const p of this.paths) p.menu?.update();
   }
 }

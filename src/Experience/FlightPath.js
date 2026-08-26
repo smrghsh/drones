@@ -5,6 +5,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { Experience } from "brahma-xr";
 import { project, METERS_PER_UNIT, settings } from "./domain.js";
+import ScanMenu from "./ScanMenu.js";
 
 /**
  * One drone mission: a fat line through the waypoints plus sample markers.
@@ -61,6 +62,12 @@ export default class FlightPath extends THREE.Group {
     this.add(inst);
     this.highlightWindow(null);
 
+    // 3D representations of a scan: Skydio coverage mesh (shipped with the
+    // export), our own photogrammetry mesh and Gaussian splat (tools/reconstruct.py)
+    this.reps = {};
+    this.representation = "coverage";
+    this.orthoOnTerrain = true;
+    this.loading = null;
     if (flight.mesh) this.loadMesh(flight.mesh);
 
     // hover marker + panel scale, sized to the mission's footprint
@@ -107,11 +114,81 @@ export default class FlightPath extends THREE.Group {
       anchor.scale.setScalar(1 / METERS_PER_UNIT); // vertical exaggeration is applied on World.model
       anchor.add(yawed);
       this.mesh = anchor;
+      this.reps.coverage = anchor;
+      anchor.visible = this.representation === "coverage";
       this.add(anchor);
       this.updateMatrixWorld(true);
       this.meshBounds = new THREE.Box3().setFromObject(mesh); // world space
+      this.placeMenu();
       this.dispatchEvent({ type: "meshloaded" });
     });
+  }
+
+  /** In-scene menu beside the scan (needs the coverage mesh bounds to know where "beside" is). */
+  placeMenu() {
+    if (this.flight.kind !== "scan") return;
+    if (!this.menu) { this.menu = new ScanMenu(this); this.add(this.menu); this.menu.setVisible(this.visible); }
+    const box = this.meshBounds ?? this.bounds();
+    const local = this.worldToLocal(new THREE.Vector3(box.max.x, box.max.y, box.min.z)); // NE corner, top
+    this.menu.position.copy(local).add(new THREE.Vector3(0.12 * this.uiScale, 0.35 * this.uiScale, 0));
+  }
+
+  /** Anchor group for a georeferenced asset: ENU metres about origin (lat, lon, alt 0 = MSL). */
+  anchorFor(spec) {
+    const anchor = new THREE.Group();
+    anchor.position.copy(project(spec.origin.lat, spec.origin.lon, spec.origin.alt_msl ?? 0));
+    anchor.scale.setScalar(1 / METERS_PER_UNIT);
+    const inner = new THREE.Group();
+    const o = spec.offset_m ?? [0, 0, 0];
+    inner.position.set(o[0], o[2], -o[1]); // (e, n, up) -> scene (x, y, -z)
+    inner.rotation.y = THREE.MathUtils.degToRad(spec.yaw_deg ?? 0);
+    anchor.add(inner);
+    anchor.inner = inner;
+    return anchor;
+  }
+
+  /** Switch the scan's 3D model: "coverage" | "recon" | "splat" | "none". Loads lazily. */
+  async setRepresentation(key) {
+    this.representation = key;
+    for (const [k, g] of Object.entries(this.reps)) g.visible = k === key;
+    this.menu?.refresh();
+    this.experience.world?.onModelChanged?.(this);
+    if (key === "none" || this.reps[key]) return;
+    const spec = this.flight[key];
+    if (!spec) return;
+    this.loading = key; this.menu?.refresh();
+    const anchor = this.anchorFor(spec);
+    try {
+      if (key === "recon") {
+        const gltf = await new GLTFLoader().loadAsync(spec.file);
+        const m = gltf.scene;
+        if (spec.frame?.startsWith("enu")) m.rotation.x = -Math.PI / 2; // z-up ENU -> y-up
+        m.traverse((o) => { if (o.isMesh) { o.raycast = () => {}; o.material.side = THREE.DoubleSide; o.renderOrder = 1; } });
+        anchor.inner.add(m);
+      } else if (key === "splat") {
+        const { SplatMesh } = await import("./spark.module.js");
+        const splat = new SplatMesh({ url: spec.file });
+        if (spec.frame?.startsWith("enu")) splat.rotation.x = -Math.PI / 2;
+        splat.raycast = () => {};
+        anchor.inner.add(splat);
+      }
+    } catch (e) {
+      console.error(`failed to load ${key} for ${this.flight.id}`, e);
+      this.loading = null; this.representation = "coverage"; this.reps.coverage && (this.reps.coverage.visible = true); this.menu?.refresh();
+      return;
+    }
+    this.reps[key] = anchor;
+    this.add(anchor);
+    this.loading = null;
+    anchor.visible = this.representation === key; // user may have switched meanwhile
+    this.menu?.refresh();
+  }
+
+  setOrthoOnTerrain(v) {
+    this.orthoOnTerrain = v;
+    this.experience.world?.refreshOrthos();
+    this.menu?.refresh();
+    this.experience.world?.onModelChanged?.(this);
   }
 
 
@@ -197,6 +274,7 @@ export default class FlightPath extends THREE.Group {
     if (selectable && i < 0) list.push(this);
     if (!selectable && i >= 0) list.splice(i, 1);
     if (!selectable && this.hover) this.onUnhover();
+    this.menu?.setVisible(active);
     this.material.opacity = 0.95 * (emphasis < 1 ? 0.35 : 1);
     this.samples.material.transparent = true;
     this.samples.material.opacity = emphasis < 1 ? 0.35 : 1;
