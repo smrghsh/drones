@@ -6,6 +6,8 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { Experience } from "brahma-xr";
 import { project, METERS_PER_UNIT, settings } from "./domain.js";
 import ScanMenu from "./ScanMenu.js";
+import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
+import { fetchChunked } from "./chunked.js";
 
 /**
  * One drone mission: a fat line through the waypoints plus sample markers.
@@ -160,14 +162,20 @@ export default class FlightPath extends THREE.Group {
     const anchor = this.anchorFor(spec);
     try {
       if (key === "recon") {
-        const gltf = await new GLTFLoader().loadAsync(spec.file);
+        // meshopt-compressed glb (tools/reconstruct.py -> gltf-transform), possibly split into <5 MB parts
+        const buf = await fetchChunked(spec.file);
+        const loader = new GLTFLoader();
+        loader.setMeshoptDecoder(MeshoptDecoder);
+        const gltf = await loader.parseAsync(buf, spec.file.replace(/[^/]*$/, ""));
         const m = gltf.scene;
         if (spec.frame?.startsWith("enu")) m.rotation.x = -Math.PI / 2; // z-up ENU -> y-up
         m.traverse((o) => { if (o.isMesh) { o.raycast = () => {}; o.material.side = THREE.DoubleSide; o.renderOrder = 1; } });
         anchor.inner.add(m);
       } else if (key === "splat") {
-        const { SplatMesh } = await import("./spark.module.js");
-        const splat = new SplatMesh({ url: spec.file });
+        const { SplatMesh, SplatFileType } = await import("./spark.module.js");
+        const bytes = new Uint8Array(await fetchChunked(spec.file));
+        const type = spec.file.endsWith(".sog") ? SplatFileType.PCSOGSZIP : spec.file.endsWith(".spz") ? SplatFileType.SPZ : SplatFileType.PLY;
+        const splat = new SplatMesh({ fileBytes: bytes, fileType: type });
         if (spec.frame?.startsWith("enu")) splat.rotation.x = -Math.PI / 2;
         splat.raycast = () => {};
         anchor.inner.add(splat);

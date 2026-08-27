@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["numpy", "pillow", "pyproj"]
+# dependencies = ["numpy", "pillow", "pyproj", "scipy"]
 # ///
 """Reconstruct a Skydio 3D Scan ourselves: COLMAP SfM -> OpenMVS textured mesh
 and a Brush Gaussian splat, georeferenced from the photo geotags.
@@ -142,16 +142,20 @@ def stage_mesh(D, W, a, fid):
     if not dense.exists():
         sh([B / "DensifyPointCloud", scene, "-o", dense, "--resolution-level", "2", "--number-views-fuse", "3",
             "--max-threads", str(a.threads)], log, cwd=mvs)
-    meshf = mvs / "scene_dense_mesh.mvs"
+    meshf = mvs / "scene_dense_mesh.ply"
     if not meshf.exists():
-        sh([B / "ReconstructMesh", dense, "-o", meshf, "--decimate", "0.5", "--max-threads", str(a.threads)], log, cwd=mvs)
-    tex = mvs / "scene_dense_mesh_texture.mvs"
+        sh([B / "ReconstructMesh", dense, "-o", mvs / "scene_dense_mesh.mvs", "--decimate", "0.5", "--max-threads", str(a.threads)], log, cwd=mvs)
     if not (mvs / "scene_dense_mesh_texture.glb").exists():
-        sh([B / "TextureMesh", meshf, "-o", tex, "--export-type", "glb", "--max-texture-size", "8192",
-            "--max-threads", str(a.threads)], log, cwd=mvs)
+        sh([B / "TextureMesh", dense, "-m", meshf, "-o", mvs / "scene_dense_mesh_texture.mvs", "--export-type", "glb",
+            "--max-texture-size", "8192", "--decimate", str(a.mesh_decimate), "--max-threads", str(a.threads)], log, cwd=mvs)
     out = FLIGHTS / fid; out.mkdir(exist_ok=True)
-    shutil.copy(mvs / "scene_dense_mesh_texture.glb", out / "recon.glb")
+    # OpenMVS leaves textures as external PNGs (~450 MB total); pack + compress: meshopt geometry, WebP textures
+    if not (mvs / "recon_opt.glb").exists():
+        sh(["npx", "-y", "@gltf-transform/cli", "optimize", mvs / "scene_dense_mesh_texture.glb", mvs / "recon_opt.glb",
+            "--compress", "meshopt", "--texture-compress", "webp", "--texture-size", "4096"], log, cwd=mvs)
+    shutil.copy(mvs / "recon_opt.glb", out / "recon.glb")
     register(fid, "recon", f"./flights/{fid}/recon.glb", W)
+    sh(["uv", "run", REPO / "tools/chunk_assets.py", out / "recon.glb"], log)
     print("wrote", out / "recon.glb", (out / "recon.glb").stat().st_size // 1024, "KB")
 
 # ---------------------------------------------------------------- splat (Brush)
@@ -159,16 +163,45 @@ def stage_splat(D, W, a, fid):
     enu = W / "sparse_enu"; ds = W / "brush"; ds.mkdir(exist_ok=True); log = W / "brush.log"
     # Brush reads a COLMAP dataset: images/ + sparse/0/{cameras,images,points3D}.bin
     sp = ds / "sparse" / "0"; sp.mkdir(parents=True, exist_ok=True)
-    for f in ("cameras.bin", "images.bin", "points3D.bin"): shutil.copy(enu / f, sp / f)
+    # COLMAP 4 writes a new binary layout (rigs/frames) that Brush cannot parse; the text model is classic
+    for f in sp.glob("*.bin"): f.unlink()
+    for f in ("cameras.txt", "images.txt", "points3D.txt"): shutil.copy(enu / f, sp / f)
     if not (ds / "images").exists(): os.symlink((W / "images").resolve(), ds / "images")
     outd = ds / "out"; outd.mkdir(exist_ok=True)
-    sh([a.brush_bin, ds, "--total-steps", str(a.splat_steps), "--max-resolution", str(a.splat_res),
+    sh([a.brush_bin, ds, "--total-steps", str(a.splat_steps), "--max-resolution", str(a.splat_res), "--max-splats", str(a.max_splats),
         "--export-path", outd, "--export-every", str(a.splat_steps), "--export-name", "splat.ply"], log)
     ply = sorted(outd.glob("*.ply"), key=lambda p: p.stat().st_mtime)[-1]
     out = FLIGHTS / fid; out.mkdir(exist_ok=True)
-    shutil.copy(ply, out / "splat.ply")
-    register(fid, "splat", f"./flights/{fid}/splat.ply", W)
-    print("wrote", out / "splat.ply", (out / "splat.ply").stat().st_size // 1024, "KB")
+    ply = prune_splats(ply, W, margin=a.splat_margin)
+    # PLY is ~240 B/splat (350 MB for 1.5 M); SOG (PlayCanvas splat-transform) is ~15x smaller and Spark loads it directly
+    sh(["npx", "-y", "@playcanvas/splat-transform", "-w", ply, out / "splat.sog"], log)
+    register(fid, "splat", f"./flights/{fid}/splat.sog", W)
+    sh(["uv", "run", REPO / "tools/chunk_assets.py", out / "splat.sog"], log)
+    print("wrote", out / "splat.sog", (out / "splat.sog").stat().st_size // 1024, "KB")
+
+def prune_splats(ply, W, margin=8.0):
+    """Drop floaters: keep splats inside the camera footprint (+margin m) and a sane height band."""
+    import re as _re
+    poses = np.array(list(read_images_txt(W / "sparse_enu").values()))
+    lo = poses.min(0) - [margin, margin, 60]; hi = poses.max(0) + [margin, margin, 5]
+    with open(ply, "rb") as f:
+        hdr = b""
+        while not hdr.endswith(b"end_header\n"): hdr += f.readline()
+        props = _re.findall(rb"property float (\w+)", hdr); n = int(_re.search(rb"element vertex (\d+)", hdr).group(1))
+        data = np.fromfile(f, dtype=np.float32, count=n * len(props)).reshape(n, len(props))
+    P = data[:, [props.index(b"x"), props.index(b"y"), props.index(b"z")]]
+    keep = np.all((P >= lo) & (P <= hi), axis=1)
+    # within `margin` m (horizontally) of some camera, not near-transparent, not a giant blob
+    from scipy.spatial import cKDTree
+    d, _ = cKDTree(poses[:, :2]).query(P[:, :2], distance_upper_bound=margin)
+    keep &= np.isfinite(d)
+    op = 1 / (1 + np.exp(-data[:, props.index(b"opacity")])); keep &= op > 0.05
+    sc = np.exp(data[:, [props.index(b"scale_0"), props.index(b"scale_1"), props.index(b"scale_2")]]).max(1); keep &= sc < 1.5
+    out = ply.with_name("splat_pruned.ply")
+    with open(out, "wb") as f:
+        f.write(hdr.replace(f"element vertex {n}".encode(), f"element vertex {int(keep.sum())}".encode())); data[keep].tofile(f)
+    print(f"pruned splats: {n:,} -> {int(keep.sum()):,} (footprint + {margin} m)")
+    return out
 
 def register(fid, key, file, W):
     o = json.loads((W / "origin.json").read_text())
@@ -182,10 +215,12 @@ def main():
     ap.add_argument("scan_dir"); ap.add_argument("--id", required=True)
     ap.add_argument("--stage", default="all", choices=["sfm", "mesh", "splat", "all"])
     ap.add_argument("--max-image-size", type=int, default=2400)
+    ap.add_argument("--mesh-decimate", type=float, default=0.3, help="fraction of faces to keep before texturing (web size)")
     ap.add_argument("--threads", type=int, default=max(1, (os.cpu_count() or 4) - 2))
     ap.add_argument("--openmvs-bin", default=str(REPO / "tools/cache/openmvs/build/bin"))
     ap.add_argument("--brush-bin", default=os.environ.get("BRUSH_BIN", str(Path.home() / ".cargo/bin/brush_app")))
-    ap.add_argument("--splat-steps", type=int, default=30000); ap.add_argument("--splat-res", type=int, default=1600)
+    ap.add_argument("--splat-steps", type=int, default=30000); ap.add_argument("--splat-res", type=int, default=1600); ap.add_argument("--max-splats", type=int, default=1500000)
+    ap.add_argument("--splat-margin", type=float, default=8.0)
     a = ap.parse_args()
     D = Path(a.scan_dir); W = CACHE / a.id; W.mkdir(parents=True, exist_ok=True)
     if a.stage in ("sfm", "all"): stage_sfm(D, W, a)

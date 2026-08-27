@@ -67,6 +67,14 @@ Everything is baked once into `static/` by two scripts — see `tools/`:
   mesh → texture (`recon.glb`), and a Brush Gaussian splat (`splat.ply`,
   rendered with Spark). Each output is registered on the flight JSON with its
   ENU origin/offset so it drops into the same frame as the coverage mesh.
+  Outputs are packed for the web (meshopt + WebP mesh ≈ 25 MB, pruned splat
+  → SOG ≈ 20 MB) and split into <5 MB `.partNN` files by
+  `tools/chunk_assets.py` (`src/Experience/chunked.js` reassembles them; the
+  unsplit originals are git-ignored). Needs `colmap` (brew), OpenMVS built in
+  `tools/cache/openmvs/build/bin` (from source, `-DOpenCV_DIR` → opencv@4,
+  needs nanoflann/TinyEXIF/TinyNPY), and `brush_app` (cargo, tagged release,
+  `--locked`; set `BRUSH_BIN`). On an M2 Max: SfM ~30 min, dense mesh ~1.5 h,
+  splat ~1 h per scan (much longer if the machine is busy).
 
 Real flight logs of other kinds should be converted to the same JSON shape
 (documented in `gen_flights.py`); the app reads `flights/index.json`.

@@ -1,0 +1,87 @@
+03:03:37 [App     ] OpenMVS x64 v2.4.0 (8efd9c4)
+03:03:37 [App     ] Build date: Aug 26 2026, 16:00:21
+03:03:37 [App     ] CPU: Apple M2 Max (12 cores)
+03:03:37 [App     ] RAM: 96.00GB Physical Memory 0B Virtual Memory
+03:03:37 [App     ] OS: macOS 15.7.8 (Sequoia) (arm64)
+03:03:37 [App     ] Disk: 2.02TB (3.63TB) space
+03:03:37 [App     ] Command line: TextureMesh --help
+03:03:37 [App     ] Available options:
+
+Generic options:
+  -h [ --help ]                         produce this help message
+  -w [ --working-folder ] arg           working directory (default current 
+                                        directory)
+  -c [ --config-file ] arg (=TextureMesh.cfg)
+                                        file name containing program options
+  --export-type arg (=ply)              file type used to export the 3D scene 
+                                        (ply, obj, glb or gltf)
+  --archive-type arg (=4294967295)      project archive type: -1-interface, 
+                                        0-text, 1-binary, 2-compressed binary
+  --process-priority arg (=-1)          process priority (below normal by 
+                                        default)
+  --max-threads arg (=0)                maximum number of threads (0 for using 
+                                        all available cores)
+  -v [ --verbosity ] arg (=2)           verbosity level
+
+Texture options:
+  -i [ --input-file ] arg               input filename containing camera poses 
+                                        and image list
+  -m [ --mesh-file ] arg                mesh file name to texture (overwrite 
+                                        existing mesh)
+  -o [ --output-file ] arg              output filename for storing the mesh
+  --decimate arg (=1)                   decimation factor in range [0..1] to be
+                                        applied to the input surface before 
+                                        refinement (0 - auto, 1 - disabled)
+  --close-holes arg (=30)               try to close small holes in the input 
+                                        surface (0 - disabled)
+  --resolution-level arg (=0)           how many times to scale down the images
+                                        before mesh refinement
+  --min-resolution arg (=640)           do not scale images lower than this 
+                                        resolution
+  --outlier-threshold arg (=0.0599999987)
+                                        threshold used to find and remove 
+                                        outlier face textures (0 - disabled)
+  --cost-smoothness-ratio arg (=0.100000001)
+                                        ratio used to adjust the preference for
+                                        more compact patches (1 - best 
+                                        quality/worst compactness, ~0 - worst 
+                                        quality/best compactness)
+  --virtual-face-images arg (=0)        generate texture patches using virtual 
+                                        faces composed of coplanar triangles 
+                                        sharing at least this number of views 
+                                        (0 - disabled, 3 - good value)
+  --global-seam-leveling arg (=1)       generate uniform texture patches using 
+                                        global seam leveling
+  --local-seam-leveling arg (=1)        generate uniform texture patch borders 
+                                        using local seam leveling
+  --texture-size-multiple arg (=0)      texture size should be a multiple of 
+                                        this value (0 - power of two)
+  --empty-color arg (=16744231)         color used for faces not covered by any
+                                        image
+  --sharpness-weight arg (=0.5)         amount of sharpness to be applied on 
+                                        the texture (0 - disabled)
+  --orthographic-image-resolution arg (=0)
+                                        orthographic image resolution to be 
+                                        generated from the textured mesh - the 
+                                        mesh is expected to be already 
+                                        geo-referenced or at least properly 
+                                        oriented (0 - disabled)
+  --ignore-mask-label arg (=-1)         label value to ignore in the image 
+                                        mask, stored in the MVS scene or next 
+                                        to each image with '.mask.png' 
+                                        extension (-1 - auto estimate mask for 
+                                        lens distortion, -2 - disabled)
+  --max-texture-size arg (=8192)        maximum texture size, split it in 
+                                        multiple textures of this size if 
+                                        needed (0 - unbounded)
+  --export-texture-lossless arg (=1)    save the texture as PNG (lossless) or 
+                                        JPG (smaller, lossy) when exporting to 
+                                        PLY
+  --vertex-colors arg (=0)              export a PLY mesh with per-vertex 
+                                        colors instead of generating texture 
+                                        atlases
+03:03:37 [App     ] MEMORYINFO: {
+03:03:37 [App     ] 	PeakResidentSize 48.61MB
+03:03:37 [App     ] 	ResidentSize 46.03MB
+03:03:37 [App     ] 	VirtualSize 392.49GB
+03:03:37 [App     ] } ENDINFO
