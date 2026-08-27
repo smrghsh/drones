@@ -27,7 +27,7 @@ def chunk(path: Path):
     print(f"{path.relative_to(REPO)}: {len(data)/1e6:.1f} MB -> {n} parts")
 
 def main():
-    files = [Path(a) for a in sys.argv[1:]] or [p for pat in ("recon.glb", "splat.sog") for p in (REPO / "static/flights").glob(f"*/{pat}")]
+    files = [Path(a).resolve() for a in sys.argv[1:]] or [p for pat in ("recon.glb", "splat.sog") for p in (REPO / "static/flights").glob(f"*/{pat}")]
     for f in files:
         if f.stat().st_size > 5_000_000: chunk(f)
         else:
