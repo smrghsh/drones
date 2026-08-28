@@ -13,5 +13,10 @@
     "id": "strip1-v2",
     "name": "Strip 1 \u2014 video 2 (during scan)",
     "file": "./flights/strip1-v2.json"
+  },
+  {
+    "id": "coyoteBrush",
+    "name": "Coyote Brush \u2014 geotagged photo survey",
+    "file": "./flights/coyoteBrush.json"
   }
 ]

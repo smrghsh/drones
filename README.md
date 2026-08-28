@@ -59,6 +59,13 @@ Everything is baked once into `static/` by two scripts — see `tools/`:
   the coverage mesh's height. The app drapes it on the mesh *and* the terrain
   inside its footprint (`ortho.jpg` + coverage mask); NAIP shows elsewhere.
 
+- `uv run tools/import_autel_photos.py data/<photo-dir> --id <id> --name <name>`
+  imports an externally supplied Autel geotagged survey as a path with selectable
+  thumbnails. `uv run tools/bake_autel_ortho.py data/<photo-dir> --id <id>` then
+  makes a lightweight GPS/yaw-aligned terrain preview. This preview makes the
+  survey photography visible in XR, but is not a bundle-adjusted scientific
+  orthomosaic; use `reconstruct.py` for a registered mesh or Gaussian splat.
+
 - `uv run tools/import_video.py data/<dir>/<video> --scan <id> --id <vid>` —
   imports a **flight video**. Skydio MP4/LRV files carry no GPS track, but a
   video recorded *during* a 3D scan is bracketed by the scan's geotagged

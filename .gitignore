@@ -1,15 +1,8 @@
 node_modules/
 tools/cache/
-# Git cannot ignore by file size. Keep the currently known files over 24 MiB
-# out of history; rerun the size audit whenever new raw data is added.
-/data/Drone_data/S1010965.MP4
-/data/Drone_data/S1010962.MP4
-/data/Drone_data/S1010441.LRV
-/data/Drone_data/S1010963.MP4
-/data/Drone_data/S1010817.LRV
-/data/Drone_data/S1010964.LRV
-/data/Drone_data/S1010961.LRV
-/data/Drone_data/260430_CoyoteBrush\ copy/103FTASK_CoyoteBrush4302026_1_Rinex.obs
+# Raw drone captures are local inputs and must never be committed. Generated,
+# web-ready paths, thumbnails, orthos and chunked models live in static/flights/.
+/data/
 .DS_Store
 # video chunks are large; the built copies in docs/ are what Pages serves — regenerate with tools/import_video.py
 static/flights/*/chunks/
