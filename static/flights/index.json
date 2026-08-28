@@ -18,5 +18,10 @@
     "id": "coyoteBrush",
     "name": "Coyote Brush \u2014 geotagged photo survey",
     "file": "./flights/coyoteBrush.json"
+  },
+  {
+    "id": "test2",
+    "name": "Bean field \u2014 Skydio 3D Scan (crop rows)",
+    "file": "./flights/test2.json"
   }
 ]

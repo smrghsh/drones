@@ -68,6 +68,8 @@ export default class World {
 
     // The current flower-bed scan has a detailed 3D Gaussian splat. Prefer it
     // over the flat coverage mesh so foliage reads as volume when entering VR.
+    // Scans with reconstructed splats start in that representation so flowers,
+    // bushes and crop rows read as actual volume instead of a brown coverage mesh.
     await Promise.all(this.paths
       .filter((path) => path.flight.kind === "scan" && path.flight.splat)
       .map((path) => path.setRepresentation("splat")));
