@@ -1,10 +1,5 @@
 [
   {
-    "id": "test2",
-    "name": "Test2 \u2014 Skydio 3D Scan (crop rows)",
-    "file": "./flights/test2.json"
-  },
-  {
     "id": "strip1",
     "name": "Strip 1 \u2014 Skydio 3D Scan (small strip span)",
     "file": "./flights/strip1.json"
