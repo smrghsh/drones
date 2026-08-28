@@ -43,5 +43,4 @@ if (import.meta.hot) {
   });
 }
 
-import './my-skybox.js';
 
