@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { Experience, Environment } from "brahma-xr";
 import { setSite, MODEL_Y, settings } from "./domain.js";
+import Stars from "./Stars.js";
 import Terrain from "./Terrain.js";
 import FlightPath from "./FlightPath.js";
 import SamplePanel from "./SamplePanel.js";
@@ -16,6 +17,7 @@ export default class World {
     this.debug = this.experience.debug;
 
     this.environment = new Environment("#0b0f1a");
+    this.stars = new Stars();
     this.model = new THREE.Group(); // everything geo lives here
     this.model.position.y = MODEL_Y;
     this.scene.add(this.model);
