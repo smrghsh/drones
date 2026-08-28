@@ -22,6 +22,8 @@ export default class World {
     this.model.position.y = MODEL_Y;
     this.scene.add(this.model);
 
+    // will access debug ui to implement table feature
+
     this.paths = [];
     this.ready = this.load();
   }
