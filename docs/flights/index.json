@@ -1,10 +1,5 @@
 [
   {
-    "id": "test2",
-    "name": "Test2 \u2014 Skydio 3D Scan (crop rows)",
-    "file": "./flights/test2.json"
-  },
-  {
     "id": "strip1",
     "name": "Strip 1 \u2014 Skydio 3D Scan (small strip span)",
     "file": "./flights/strip1.json"
@@ -18,5 +13,15 @@
     "id": "strip1-v2",
     "name": "Strip 1 \u2014 video 2 (during scan)",
     "file": "./flights/strip1-v2.json"
+  },
+  {
+    "id": "coyoteBrush",
+    "name": "Coyote Brush \u2014 geotagged photo survey",
+    "file": "./flights/coyoteBrush.json"
+  },
+  {
+    "id": "test2",
+    "name": "Bean field \u2014 Skydio 3D Scan (crop rows)",
+    "file": "./flights/test2.json"
   }
 ]
