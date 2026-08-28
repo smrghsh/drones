@@ -83,8 +83,8 @@ export default class FlightPath extends THREE.Group {
 
     this.setResolution();
     this.experience.on("resize", () => this.setResolution());
-    this.experience.renderer.instance.xr.addEventListener("sessionstart", () => this.setResolution());
-    this.experience.renderer.instance.xr.addEventListener("sessionend", () => this.setResolution());
+    this.experience.renderer.instance.xr.addEventListener("sessionstart", () => { this.setResolution(); this.setSplatQuality("fast"); });
+    this.experience.renderer.instance.xr.addEventListener("sessionend", () => { this.setResolution(); this.setSplatQuality(this.preferredSplatQuality ?? "fast"); });
     this.experience.selectableObjects.push(this);
   }
 
@@ -172,12 +172,10 @@ export default class FlightPath extends THREE.Group {
         m.traverse((o) => { if (o.isMesh) { o.raycast = () => {}; o.material.side = THREE.DoubleSide; o.renderOrder = 1; } });
         anchor.inner.add(m);
       } else if (key === "splat") {
-        const { SplatMesh, SplatFileType } = await import("./spark.module.js");
-        const bytes = new Uint8Array(await fetchChunked(spec.file));
-        const type = spec.file.endsWith(".sog") ? SplatFileType.PCSOGSZIP : spec.file.endsWith(".spz") ? SplatFileType.SPZ : SplatFileType.PLY;
-        const splat = new SplatMesh({ fileBytes: bytes, fileType: type });
-        if (spec.frame?.startsWith("enu")) splat.rotation.x = -Math.PI / 2;
-        splat.raycast = () => {};
+        const quality = this.flight.splat_fast ? "fast" : this.flight.splat_vr ? "vr" : "desktop";
+        const qualitySpec = quality === "fast" ? this.flight.splat_fast : quality === "vr" ? this.flight.splat_vr : spec;
+        const splat = await this.makeSplat(qualitySpec);
+        this.splatMesh = splat; this.splatQuality = quality; this.splatAnchor = anchor;
         anchor.inner.add(splat);
       }
     } catch (e) {
@@ -190,6 +188,34 @@ export default class FlightPath extends THREE.Group {
     this.loading = null;
     anchor.visible = this.representation === key; // user may have switched meanwhile
     this.menu?.refresh();
+  }
+
+  async makeSplat(spec) {
+    const { SplatMesh, SplatFileType } = await import("./spark.module.js");
+    const bytes = new Uint8Array(await fetchChunked(spec.file));
+    const type = spec.file.endsWith(".sog") ? SplatFileType.PCSOGSZIP : spec.file.endsWith(".spz") ? SplatFileType.SPZ : SplatFileType.PLY;
+    const splat = new SplatMesh({ fileBytes: bytes, fileType: type, blurAmount: 0.12, maxStdDev: 2.45, minAlpha: 1 / 255 });
+    if (spec.frame?.startsWith("enu")) splat.rotation.x = -Math.PI / 2;
+    splat.raycast = () => {};
+    return splat;
+  }
+
+  /** Full detail on desktop; a 500K-splat model for stereo headset rendering. */
+  async setSplatQuality(quality) {
+    if (!this.flight.splat_vr || !this.splatMesh || this.splatQuality === quality) return;
+    this.pendingSplatQuality = quality;
+    const spec = quality === "fast" ? (this.flight.splat_fast ?? this.flight.splat_vr) : quality === "vr" ? this.flight.splat_vr : this.flight.splat;
+    try {
+      const next = await this.makeSplat(spec);
+      if (this.pendingSplatQuality !== quality) { next.dispose?.(); return; }
+      const old = this.splatMesh;
+      this.splatAnchor.inner.remove(old);
+      this.splatAnchor.inner.add(next);
+      this.splatMesh = next; this.splatQuality = quality;
+      old.dispose?.();
+    } catch (error) {
+      console.error(`failed to switch splat quality to ${quality}`, error);
+    }
   }
 
   setOrthoOnTerrain(v) {

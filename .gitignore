@@ -1,6 +1,8 @@
 node_modules/
 tools/cache/
-data/
+# Raw drone captures are local inputs and must never be committed. Generated,
+# web-ready paths, thumbnails, orthos and chunked models live in static/flights/.
+/data/
 .DS_Store
 # video chunks are large; the built copies in docs/ are what Pages serves — regenerate with tools/import_video.py
 static/flights/*/chunks/

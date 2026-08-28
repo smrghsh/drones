@@ -293,6 +293,7 @@ export default class VideoPath extends THREE.Group {
     }
   }
   onSelect(worldPoint) {
+    this.experience.world?.setRideTarget?.(this);
     if (this.panel.pinned) {
       this.panel.setPinned(false);
       if (worldPoint) this.setSphere(worldPoint);

@@ -8,6 +8,12 @@ controller) at a path to open a sample panel — metadata fields plus the image
 captured at the nearest sample — and at the ground to read lat/lon + elevation.
 Built on [brahma-xr](https://github.com/smrghsh/brahma) via `create-brahma-xr`.
 
+Select a video path to make it the target of the viewer-following **Ride Flight
+Path** controls. Start carries the desktop camera or complete VR rig along the
+geolocated trajectory; Pause freezes it in place, Resume continues, and Stop
+returns the viewer to the exact pre-ride pose. VR head movement and pointing
+remain live during a ride, while grab locomotion is temporarily disabled.
+
 **Live:** https://smrghsh.github.io/drones/ (append `#debug` for the control panel)
 
 ## Run
@@ -19,6 +25,13 @@ NO_SSL=1 npm run dev   # plain http — handy on desktop
 npx brahma-xr-server   # optional multiplayer relay
 npm run build          # -> docs/ (GitHub Pages)
 ```
+
+For a headset, run the default HTTPS server (without `NO_SSL`), open the LAN
+URL printed by Vite in the headset browser, accept the development certificate,
+and press **Enter VR**. The flower-bed splat uses a 180K-Gaussian interactive
+asset by default; `#debug` → Terrain → Flower detail can switch to balanced
+500K or detailed 1.5M versions for comparison. The app swaps back to the fast asset whenever an
+immersive session begins.
 
 ## Data (no API keys)
 
@@ -45,6 +58,13 @@ Everything is baked once into `static/` by two scripts — see `tools/`:
   intrinsics and radial dewarp from the Skydio XMP; OpenCV camera axes) over
   the coverage mesh's height. The app drapes it on the mesh *and* the terrain
   inside its footprint (`ortho.jpg` + coverage mask); NAIP shows elsewhere.
+
+- `uv run tools/import_autel_photos.py data/<photo-dir> --id <id> --name <name>`
+  imports an externally supplied Autel geotagged survey as a path with selectable
+  thumbnails. `uv run tools/bake_autel_ortho.py data/<photo-dir> --id <id>` then
+  makes a lightweight GPS/yaw-aligned terrain preview. This preview makes the
+  survey photography visible in XR, but is not a bundle-adjusted scientific
+  orthomosaic; use `reconstruct.py` for a registered mesh or Gaussian splat.
 
 - `uv run tools/import_video.py data/<dir>/<video> --scan <id> --id <vid>` —
   imports a **flight video**. Skydio MP4/LRV files carry no GPS track, but a
@@ -100,7 +120,8 @@ Real flight logs of other kinds should be converted to the same JSON shape
 switches between missions (a scan brings the videos shot during it and vice
 versa); click / trigger pins the panel. **Videos → Play whole flight** makes a
 pinned clip auto-advance through the segments; **Ground swath** toggles the
-footprint overlay. Hovering a video segment also lights up the scan photos
+footprint overlay. **Ride speed** and the ride transport controls mirror the
+in-scene Start / Pause / Stop controls. Hovering a video segment also lights up the scan photos
 captured in that window, and the hovered segment is shared with other users
 in the session (brahma callout relay).
 
