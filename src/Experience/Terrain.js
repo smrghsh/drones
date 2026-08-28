@@ -242,12 +242,18 @@ export default class Terrain extends THREE.Group {
     };
     this.orthoSlots = [null, null]; // spec loaded in each slot
     this.orthoTex = new Map(); // spec -> [tex, mask]
-    const seg = this.hw - 1;
+    // Rendering every elevation texel as geometry is expensive while moving.
+    // Keep the full raster for elevation queries and shader normals, but use a
+    // lighter surface grid underneath the detailed scan/splat models.
+    const seg = Math.min(this.hw - 1, 256);
     const geom = new THREE.PlaneGeometry(this.size, this.size, seg, seg);
     // Displace on the CPU so raycasts hit the real surface (grid == texels).
     const pos = geom.attributes.position;
+    const uv = geom.attributes.uv;
     for (let i = 0; i < pos.count; i++) {
-      pos.setZ(i, (this.heights[i] - this.site.z_center) / METERS_PER_UNIT);
+      const x = Math.round(uv.getX(i) * (this.hw - 1));
+      const y = Math.round((1 - uv.getY(i)) * (this.hh - 1));
+      pos.setZ(i, (this.heights[y * this.hw + x] - this.site.z_center) / METERS_PER_UNIT);
     }
     pos.needsUpdate = true;
     geom.computeBoundingSphere();
@@ -296,9 +302,17 @@ export default class Terrain extends THREE.Group {
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.NoColorSpace; tex.minFilter = tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = false;
     const size = meta.size_m / METERS_PER_UNIT;
-    const geom = new THREE.PlaneGeometry(size, size, n - 1, n - 1);
+    // The source is 1143² (~2.6M triangles). A 384² render grid preserves the
+    // landform while the original 0.35 m raster still drives shading/heightAt.
+    const seg = Math.min(n - 1, 384);
+    const geom = new THREE.PlaneGeometry(size, size, seg, seg);
     const pos = geom.attributes.position;
-    for (let i = 0; i < pos.count; i++) pos.setZ(i, (heights[i] - this.site.z_center) / METERS_PER_UNIT);
+    const uv = geom.attributes.uv;
+    for (let i = 0; i < pos.count; i++) {
+      const x = Math.round(uv.getX(i) * (n - 1));
+      const y = Math.round((1 - uv.getY(i)) * (n - 1));
+      pos.setZ(i, (heights[y * n + x] - this.site.z_center) / METERS_PER_UNIT);
+    }
     pos.needsUpdate = true; geom.computeBoundingSphere();
     const ox = meta.center_e / METERS_PER_UNIT, oz = -meta.center_n / METERS_PER_UNIT;
     const uniforms = {
