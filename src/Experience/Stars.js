@@ -20,7 +20,8 @@ export default class Stars {
     const colors = new Float32Array(COUNT * 3).fill(1);
 
     for (let i = 0; i < COUNT * 3; i += 3) {
-      const distance = MIN_DISTANCE + Math.random() * (MAX_DISTANCE - MIN_DISTANCE);
+      const distance =
+        MIN_DISTANCE + Math.random() * (MAX_DISTANCE - MIN_DISTANCE);
       const rot1 = Math.acos(2 * Math.random() - 1); // uniform on the sphere
       const rot2 = Math.random() * 2 * Math.PI;
       positions[i] = Math.sin(rot1) * Math.cos(rot2) * distance;
@@ -45,7 +46,7 @@ export default class Stars {
     this.particles.frustumCulled = false;
     this.scene.add(this.particles);
 
-    // Assets preload after World is constructed; attach the sprite once they land.
+    // applyTexture will be applied when resources are ready and attempt to apply it on construction
     const applyTexture = () => {
       const texture = this.resources.items.starTexture;
       if (!texture) return;
