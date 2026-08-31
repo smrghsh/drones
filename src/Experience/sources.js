@@ -5,5 +5,6 @@
 //        | simulationData (fetches raw text — CSV, JSON, whatever)
 export default [
   // { name: "goggleModel", type: "glbModel", path: "./goggle.glb" }, // avatars wear these if present
-  { name: "starTexture", type: "texture", path: "./textures/star.png" },
+  //{ name: "starTexture", type: "texture", path: "./textures/star.png" },
+  { name: "daytimeSkyTexture", type: "exr", path: "./skies/qwantani_moon_noon_puresky_4k.exr" }
 ];
