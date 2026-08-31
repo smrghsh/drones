@@ -8,6 +8,7 @@ import SamplePanel from "./SamplePanel.js";
 import VideoPath from "./VideoPath.js";
 import VideoPanel from "./VideoPanel.js";
 import RideControls from "./RideControls.js";
+import TopographyMenu from "./TopographyMenu.js";
 
 const PATH_COLORS = [0xffb347, 0x5ec8ff, 0xff6b9d, 0x9dff6b];
 
@@ -30,6 +31,7 @@ export default class World {
     this._rideDirection = new THREE.Vector3();
     this._rideOffset = new THREE.Vector3();
     this.splatQuality = "fast";
+    this.topography = { shape: "detail", texture: "survey", exaggeration: 1 };
     this.experience.on("resize", () => this.applyRenderScale());
     this.ready = this.load();
   }
@@ -48,6 +50,8 @@ export default class World {
     this.model.add(this.videoPanel);
     this.rideControls = new RideControls(this);
     this.scene.add(this.rideControls);
+    this.topographyMenu = new TopographyMenu(this);
+    this.scene.add(this.topographyMenu);
 
     const index = await fetch("./flights/index.json").then((r) => r.json());
     const flights = await Promise.all(index.map((f) => fetch(f.file).then((r) => r.json())));
@@ -229,11 +233,21 @@ export default class World {
 
   /** Scale relief of everything geo (terrain, paths, scan meshes) about model y=0. */
   setExaggeration(v) {
+    this.topography.exaggeration = v;
     settings.verticalExaggeration = v;
     this.model.scale.y = v;
     this.terrain.setExaggeration(v);
     for (const p of [this.panel, this.videoPanel]) p.scale.set(p.baseScale, p.baseScale / v, p.baseScale);
+    this.topographyMenu?.refresh();
   }
+
+  terrainShapeLabel(mode) { return ({ detail: "Detailed LiDAR", coarse: "Farm-wide LiDAR", flat: "Flat reference" })[mode]; }
+  terrainTextureLabel(mode) { return ({ survey: "Survey + NAIP", satellite: "NAIP 2022", elevation: "Elevation tint" })[mode]; }
+  setTerrainShape(mode) { this.topography.shape = mode; this.terrain.setShapeMode(mode); this.topographyMenu?.refresh(); }
+  setTerrainTexture(mode) { this.topography.texture = mode; this.terrain.setTextureMode(mode); this.refreshOrthos(); this.topographyMenu?.refresh(); }
+  cycleTerrainShape() { const v = ["detail", "coarse", "flat"], i = v.indexOf(this.topography.shape); this.setTerrainShape(v[(i + 1) % v.length]); }
+  cycleTerrainTexture() { const v = ["survey", "satellite", "elevation"], i = v.indexOf(this.topography.texture); this.setTerrainTexture(v[(i + 1) % v.length]); }
+  cycleExaggeration() { const v = [1, 1.5, 2, 3, 5], i = v.indexOf(this.topography.exaggeration); this.setExaggeration(v[(i + 1) % v.length]); }
 
   /** Move the orbit camera to frame a path (or the whole model when none). */
   focus(path) {
@@ -256,7 +270,7 @@ export default class World {
     const options = { All: "All" };
     for (const p of this.paths) options[p.flight.name] = p.flight.id;
     const first = "All"; // every scan visible; pick one (or a video) in the dropdown to hover it
-    this.params = { flight: first, exaggeration: 1.0, imagery: 1.0, playAll: false, swath: true, rideSpeed: 1, splatQuality: "fast" };
+    this.params = { flight: first, terrainShape: "detail", terrainTexture: "survey", exaggeration: 1.0, imagery: 1.0, playAll: false, swath: true, rideSpeed: 1, splatQuality: "fast" };
     this.setActiveFlight(first);
     f.add(this.params, "flight", options).name("Sample path").onChange((v) => this.setActiveFlight(v));
     f.add({ unpin: () => { this.panel.setPinned(false); this.videoPanel.setPinned(false); } }, "unpin").name("Unpin panel");
@@ -290,15 +304,26 @@ export default class World {
       v.add({ stop: () => this.stopRide() }, "stop").name("Stop ride");
     }
     const t = ui.addFolder("Terrain");
+    t.add(this.params, "terrainShape", { "Detailed 3DEP LiDAR": "detail", "Farm-wide 3DEP LiDAR": "coarse", "Flat reference": "flat" })
+      .name("Shape / model").onChange((mode) => this.setTerrainShape(mode));
+    t.add(this.params, "terrainTexture", { "Survey orthos + NAIP": "survey", "NAIP 2022": "satellite", "Elevation tint": "elevation" })
+      .name("Texture / source").onChange((mode) => this.setTerrainTexture(mode));
     t.add(this.params, "splatQuality", { "Interactive / VR (180K)": "fast", "Balanced (500K)": "vr", "Desktop detail (1.5M)": "desktop" })
       .name("Flower detail").onChange((quality) => this.setSplatQuality(quality));
     t.add(this.params, "exaggeration", 0.5, 6, 0.1).name("Vertical ×").onChange((v) => this.setExaggeration(v));
     t.add(this.params, "imagery", 0, 1, 0.05).name("Imagery mix").onChange((v) => {
       this.terrain.uniforms.uImageryMix.value = v;
     });
+    const provenance = ui.addFolder("Data provenance");
+    const sources = { terrain: "USGS 3DEP · Santa Cruz County 2020", detail: "DSM · 1 m farm / 0.35 m detail", imagerySource: "USDA NAIP 2022 · 0.6 m aerial", coordinates: "Local ENU · elevation metres MSL" };
+    provenance.add(sources, "terrain").name("Terrain").disable();
+    provenance.add(sources, "detail").name("Resolution").disable();
+    provenance.add(sources, "imagerySource").name("Imagery").disable();
+    provenance.add(sources, "coordinates").name("Reference").disable();
   }
 
   update() {
+    this.terrain?.update();
     if (this.ride.state === "playing") {
       this.ride.time += this.experience.time.delta * 0.001 * this.ride.speed;
       if (this.ride.time >= this.ride.path.flight.duration_s) this.stopRide();
@@ -307,6 +332,7 @@ export default class World {
     this.panel?.update();
     this.videoPanel?.update();
     this.rideControls?.update();
+    this.topographyMenu?.update();
     for (const p of this.paths) p.menu?.update();
   }
 
