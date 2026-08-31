@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { Experience, Environment } from "brahma-xr";
 import { setSite, MODEL_Y, settings } from "./domain.js";
+import Sky from "./Sky.js";
 import Stars from "./Stars.js";
 import Terrain from "./Terrain.js";
 import FlightPath from "./FlightPath.js";
@@ -17,8 +18,10 @@ export default class World {
     this.debug = this.experience.debug;
 
     this.environment = new Environment("#0b0f1a");
+    this.sky = new Sky();
     this.stars = new Stars();
-    this.model = new THREE.Group();
+    this.stars.particles.visible = false; // hide starfield now that daytime sky is active
+    this.model = new THREE.Group(); // everything geo lives here
     this.model.position.y = MODEL_Y;
     this.scene.add(this.model);
 
@@ -26,6 +29,7 @@ export default class World {
     this.paths = [];
     this.ready = this.load();
   }
+
 
   async load() {
     const site = await fetch("./farm/site.json").then((r) => r.json());
