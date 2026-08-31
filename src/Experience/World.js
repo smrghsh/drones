@@ -238,11 +238,16 @@ export default class World {
 
   /** Scale relief of everything geo (terrain, paths, scan meshes) about model y=0. */
   setExaggeration(v) {
-    this.topography.exaggeration = v;
-    settings.verticalExaggeration = v;
-    this.model.scale.y = v;
-    this.terrain.setExaggeration(v);
-    for (const p of [this.panel, this.videoPanel]) p.scale.set(p.baseScale, p.baseScale / v, p.baseScale);
+    // Both lil-gui and the XR menu can call this method. Normalize the value
+    // once so the scene scale and both control displays cannot drift apart.
+    const value = THREE.MathUtils.clamp(Number(v) || 1, 0.5, 6);
+    this.topography.exaggeration = value;
+    settings.verticalExaggeration = value;
+    this.model.scale.y = value;
+    this.terrain.setExaggeration(value);
+    for (const p of [this.panel, this.videoPanel]) p.scale.set(p.baseScale, p.baseScale / value, p.baseScale);
+    if (this.params) this.params.exaggeration = value;
+    this.exaggerationControl?.updateDisplay();
     this.topographyMenu?.refresh();
   }
 
@@ -315,7 +320,8 @@ export default class World {
       .name("Texture / source").onChange((mode) => this.setTerrainTexture(mode));
     t.add(this.params, "splatQuality", { "Interactive / VR (180K)": "fast", "Balanced (500K)": "vr", "Desktop detail (1.5M)": "desktop" })
       .name("Flower detail").onChange((quality) => this.setSplatQuality(quality));
-    t.add(this.params, "exaggeration", 0.5, 6, 0.1).name("Vertical ×").onChange((v) => this.setExaggeration(v));
+    this.exaggerationControl = t.add(this.params, "exaggeration", 0.5, 6, 0.1)
+      .name("Vertical ×").onChange((v) => this.setExaggeration(v));
     t.add(this.params, "imagery", 0, 1, 0.05).name("Imagery mix").onChange((v) => {
       this.terrain.uniforms.uImageryMix.value = v;
     });

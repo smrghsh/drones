@@ -125,6 +125,73 @@ in-scene Start / Pause / Stop controls. Hovering a video segment also lights up 
 captured in that window, and the hovered segment is shared with other users
 in the session (brahma callout relay).
 
+## Topography controls
+
+The desktop controls are in `#debug` → **Terrain**. In VR, the same scientific
+controls are attached to the non-dominant-hand menu. They change rendering
+only; they do not modify the source data.
+
+### Shape / model
+
+- **Detailed 3DEP LiDAR** uses the 0.35 m DSM patch beneath the scans and the
+  1 m farm-wide DSM outside it. This is the best option for seeing beds, rows,
+  bushes, and other small relief. During movement and VR, the renderer uses a
+  lighter display grid for responsiveness while elevation queries still use
+  the original raster data.
+- **Farm-wide 3DEP LiDAR** uses only the 1 m DSM across the farm. It is lighter
+  and more consistent at large scale, but contains less plant-level detail.
+- **Flat reference** removes terrain relief so horizontal footprints and paths
+  are easier to compare. Vertical × cannot create relief while this model is
+  selected because every terrain height is intentionally flat.
+
+### Texture / source
+
+- **Survey orthos + NAIP** shows flight orthomosaics inside their valid
+  coverage masks and USDA NAIP imagery everywhere else.
+- **NAIP 2022** shows only the USDA NAIP 2022 aerial image, without survey
+  orthomosaics.
+- **Elevation tint** replaces photographic imagery with a color ramp based on
+  elevation, making terrain height changes easier to read.
+
+### Flower detail
+
+- **Interactive / VR (180K)** loads the fastest Gaussian-splat variant. This
+  is the default and is recommended for navigation and headsets.
+- **Balanced (500K)** keeps more plant and flower detail at a moderate GPU and
+  memory cost.
+- **Desktop detail (1.5M)** loads the highest-detail splat and is intended for
+  close inspection on a capable desktop. It can reduce frame rate in VR.
+
+Only scans that provide these quality variants can switch between all three;
+a scan with one native splat continues to use that available asset.
+
+### Vertical ×
+
+**Vertical ×** scales vertical offsets from 0.5× to 6× around the site's
+reference elevation (`z_center`). A value of **1×** is true scale. Terrain,
+flight paths, Gaussian splats, and meshes are scaled together so registered
+data remains aligned. It also updates terrain lighting so exaggerated slopes
+shade correctly. The desktop slider and VR menu display the same current
+value.
+
+### Imagery mix
+
+**Imagery mix** blends between the elevation tint and the currently selected
+imagery source: **0** is elevation color only, **1** is imagery only, and an
+intermediate value combines them. This is a fine adjustment independent of
+Texture / source; selecting a texture preset again restores that preset's
+intended appearance.
+
+### Data provenance
+
+- Terrain: USGS 3DEP Santa Cruz County 2020 DSM, 1 m farm-wide and 0.35 m in
+  the detailed patch.
+- Base imagery: USDA NAIP 2022 aerial imagery at 0.6 m resolution.
+- Survey imagery: capture-specific flight orthomosaics; their processing and
+  registration metadata is stored in the corresponding flight JSON.
+- Coordinates: local east-north-up (ENU); elevations are metres above mean sea
+  level (MSL).
+
 ## Roadmap
 
 - `S1009741.MP4` (June 21, 4K) has no scan bracketing it — needs a Skydio flight log, or `--pin`
