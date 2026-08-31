@@ -1,3 +1,8 @@
+/**
+ * Application content wiring for flights, terrain, menus, provenance and ride controls.
+ * Topography settings are shared by desktop debug UI and the non-dominant-hand XR menu.
+ * Performance: detailed splats pause only during active navigation and return at rest.
+ */
 import * as THREE from "three";
 import { Experience, Environment } from "brahma-xr";
 import { setSite, MODEL_Y, settings } from "./domain.js";
@@ -324,6 +329,11 @@ export default class World {
 
   update() {
     this.terrain?.update();
+    // Gaussian sorting is the main camera-motion cost when multiple scans are
+    // visible. Hide only during navigation; full plant detail returns at rest.
+    for (const path of this.paths) {
+      if (path.reps?.splat) path.reps.splat.visible = path.representation === "splat" && !this.terrain.isNavigating;
+    }
     if (this.ride.state === "playing") {
       this.ride.time += this.experience.time.delta * 0.001 * this.ride.speed;
       if (this.ride.time >= this.ride.path.flight.duration_s) this.stopRide();

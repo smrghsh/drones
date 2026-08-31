@@ -1,3 +1,8 @@
+/**
+ * Non-dominant-hand XR controls for terrain shape, texture source and exaggeration.
+ * The embedded key identifies USGS 3DEP/USDA NAIP provenance and measured-vs-derived data.
+ * Canvas-textured buttons are lightweight and use brahma-xr's existing selectable pointer API.
+ */
 import * as THREE from "three";
 import { Experience } from "brahma-xr";
 

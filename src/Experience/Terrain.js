@@ -1,3 +1,9 @@
+/**
+ * Terrain rendering and interaction.
+ * Data: USGS 3DEP 2020 DSM plus USDA NAIP 2022 and flight orthomosaics.
+ * Heights are measured DSM elevations; selectable texture/source modes retain provenance.
+ * Performance: visual LODs never raycast; a 128x128 proxy handles pointer hits in desktop/XR.
+ */
 import * as THREE from "three";
 import { Experience } from "brahma-xr";
 import { METERS_PER_UNIT, settings, getSite, sceneToMetres, fromLocalMetres } from "./domain.js";
@@ -267,6 +273,26 @@ export default class Terrain extends THREE.Group {
     );
     this.mesh.rotation.x = -Math.PI / 2;
     this.add(this.mesh);
+    // Pointer.hover() recursively raycasts every child of selectable Terrain.
+    // Never test the 500K-triangle visual mesh; a small interaction proxy below
+    // supplies the hit point and heightAt() supplies the exact displayed MSL.
+    this.mesh.raycast = () => {};
+    const proxySeg = 128;
+    const proxyGeometry = new THREE.PlaneGeometry(this.size, this.size, proxySeg, proxySeg);
+    const proxyPosition = proxyGeometry.attributes.position;
+    const proxyUv = proxyGeometry.attributes.uv;
+    for (let i = 0; i < proxyPosition.count; i++) {
+      const x = Math.round(proxyUv.getX(i) * (this.hw - 1));
+      const y = Math.round((1 - proxyUv.getY(i)) * (this.hh - 1));
+      proxyPosition.setZ(i, (this.heights[y * this.hw + x] - this.site.z_center) / METERS_PER_UNIT);
+    }
+    proxyPosition.needsUpdate = true; proxyGeometry.computeBoundingSphere();
+    this.raycastProxy = new THREE.Mesh(proxyGeometry, new THREE.MeshBasicMaterial({
+      side: THREE.DoubleSide, colorWrite: false, depthWrite: false,
+    }));
+    this.raycastProxy.rotation.x = -Math.PI / 2;
+    this.raycastProxy.name = "terrain-raycast-proxy";
+    this.add(this.raycastProxy);
     this.marker.raycast = () => {};
     this.label.raycast = () => {};
     this.experience.selectableObjects.push(this);
@@ -330,6 +356,8 @@ export default class Terrain extends THREE.Group {
     const material = new THREE.ShaderMaterial({ vertexShader, fragmentShader, uniforms });
     const mesh = new THREE.Mesh(makeGeometry(n - 1), material);
     const lowMesh = new THREE.Mesh(makeGeometry(Math.min(n - 1, 384)), material);
+    mesh.raycast = () => {};
+    lowMesh.raycast = () => {};
     mesh.rotation.x = -Math.PI / 2;
     lowMesh.rotation.x = -Math.PI / 2;
     mesh.position.set(ox, 0, oz);
@@ -361,8 +389,9 @@ export default class Terrain extends THREE.Group {
     if (moved) this._lodLastMotion = now;
     this._lodPosition.copy(this._lodNextPosition);
     this._lodQuaternion.copy(this._lodNextQuaternion);
+    this.isNavigating = moved || now - this._lodLastMotion < 180;
     const useDetail = this.shapeMode === "detail";
-    const useLow = renderer.xr.isPresenting || now - this._lodLastMotion < 180;
+    const useLow = renderer.xr.isPresenting || this.isNavigating;
     this.detail.mesh.visible = useDetail && !useLow;
     this.detail.lowMesh.visible = useDetail && useLow;
   }
