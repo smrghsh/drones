@@ -8,6 +8,12 @@ controller) at a path to open a sample panel — metadata fields plus the image
 captured at the nearest sample — and at the ground to read lat/lon + elevation.
 Built on [brahma-xr](https://github.com/smrghsh/brahma) via `create-brahma-xr`.
 
+Select a video path to make it the target of the viewer-following **Ride Flight
+Path** controls. Start carries the desktop camera or complete VR rig along the
+geolocated trajectory; Pause freezes it in place, Resume continues, and Stop
+returns the viewer to the exact pre-ride pose. VR head movement and pointing
+remain live during a ride, while grab locomotion is temporarily disabled.
+
 **Live:** https://smrghsh.github.io/drones/ (append `#debug` for the control panel)
 
 ## Run
@@ -19,6 +25,13 @@ NO_SSL=1 npm run dev   # plain http — handy on desktop
 npx brahma-xr-server   # optional multiplayer relay
 npm run build          # -> docs/ (GitHub Pages)
 ```
+
+For a headset, run the default HTTPS server (without `NO_SSL`), open the LAN
+URL printed by Vite in the headset browser, accept the development certificate,
+and press **Enter VR**. The flower-bed splat uses a 180K-Gaussian interactive
+asset by default; `#debug` → Terrain → Flower detail can switch to balanced
+500K or detailed 1.5M versions for comparison. The app swaps back to the fast asset whenever an
+immersive session begins.
 
 ## Data (no API keys)
 
@@ -45,6 +58,13 @@ Everything is baked once into `static/` by two scripts — see `tools/`:
   intrinsics and radial dewarp from the Skydio XMP; OpenCV camera axes) over
   the coverage mesh's height. The app drapes it on the mesh *and* the terrain
   inside its footprint (`ortho.jpg` + coverage mask); NAIP shows elsewhere.
+
+- `uv run tools/import_autel_photos.py data/<photo-dir> --id <id> --name <name>`
+  imports an externally supplied Autel geotagged survey as a path with selectable
+  thumbnails. `uv run tools/bake_autel_ortho.py data/<photo-dir> --id <id>` then
+  makes a lightweight GPS/yaw-aligned terrain preview. This preview makes the
+  survey photography visible in XR, but is not a bundle-adjusted scientific
+  orthomosaic; use `reconstruct.py` for a registered mesh or Gaussian splat.
 
 - `uv run tools/import_video.py data/<dir>/<video> --scan <id> --id <vid>` —
   imports a **flight video**. Skydio MP4/LRV files carry no GPS track, but a
@@ -100,9 +120,77 @@ Real flight logs of other kinds should be converted to the same JSON shape
 switches between missions (a scan brings the videos shot during it and vice
 versa); click / trigger pins the panel. **Videos → Play whole flight** makes a
 pinned clip auto-advance through the segments; **Ground swath** toggles the
-footprint overlay. Hovering a video segment also lights up the scan photos
+footprint overlay. **Ride speed** and the ride transport controls mirror the
+in-scene Start / Pause / Stop controls. Hovering a video segment also lights up the scan photos
 captured in that window, and the hovered segment is shared with other users
 in the session (brahma callout relay).
+
+## Topography controls
+
+The desktop controls are in `#debug` → **Terrain**. In VR, the same scientific
+controls are attached to the non-dominant-hand menu. They change rendering
+only; they do not modify the source data.
+
+### Shape / model
+
+- **Detailed 3DEP LiDAR** uses the 0.35 m DSM patch beneath the scans and the
+  1 m farm-wide DSM outside it. This is the best option for seeing beds, rows,
+  bushes, and other small relief. During movement and VR, the renderer uses a
+  lighter display grid for responsiveness while elevation queries still use
+  the original raster data.
+- **Farm-wide 3DEP LiDAR** uses only the 1 m DSM across the farm. It is lighter
+  and more consistent at large scale, but contains less plant-level detail.
+- **Flat reference** removes terrain relief so horizontal footprints and paths
+  are easier to compare. Vertical × cannot create relief while this model is
+  selected because every terrain height is intentionally flat.
+
+### Texture / source
+
+- **Survey orthos + NAIP** shows flight orthomosaics inside their valid
+  coverage masks and USDA NAIP imagery everywhere else.
+- **NAIP 2022** shows only the USDA NAIP 2022 aerial image, without survey
+  orthomosaics.
+- **Elevation tint** replaces photographic imagery with a color ramp based on
+  elevation, making terrain height changes easier to read.
+
+### Flower detail
+
+- **Interactive / VR (180K)** loads the fastest Gaussian-splat variant. This
+  is the default and is recommended for navigation and headsets.
+- **Balanced (500K)** keeps more plant and flower detail at a moderate GPU and
+  memory cost.
+- **Desktop detail (1.5M)** loads the highest-detail splat and is intended for
+  close inspection on a capable desktop. It can reduce frame rate in VR.
+
+Only scans that provide these quality variants can switch between all three;
+a scan with one native splat continues to use that available asset.
+
+### Vertical ×
+
+**Vertical ×** scales vertical offsets from 0.5× to 6× around the site's
+reference elevation (`z_center`). A value of **1×** is true scale. Terrain,
+flight paths, Gaussian splats, and meshes are scaled together so registered
+data remains aligned. It also updates terrain lighting so exaggerated slopes
+shade correctly. The desktop slider and VR menu display the same current
+value.
+
+### Imagery mix
+
+**Imagery mix** blends between the elevation tint and the currently selected
+imagery source: **0** is elevation color only, **1** is imagery only, and an
+intermediate value combines them. This is a fine adjustment independent of
+Texture / source; selecting a texture preset again restores that preset's
+intended appearance.
+
+### Data provenance
+
+- Terrain: USGS 3DEP Santa Cruz County 2020 DSM, 1 m farm-wide and 0.35 m in
+  the detailed patch.
+- Base imagery: USDA NAIP 2022 aerial imagery at 0.6 m resolution.
+- Survey imagery: capture-specific flight orthomosaics; their processing and
+  registration metadata is stored in the corresponding flight JSON.
+- Coordinates: local east-north-up (ENU); elevations are metres above mean sea
+  level (MSL).
 
 ## Roadmap
 

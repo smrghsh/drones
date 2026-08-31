@@ -25,6 +25,7 @@ export default class World {
     this.model.position.y = MODEL_Y;
     this.scene.add(this.model);
 
+    this.currentScale = 1.0;
     this.paths = [];
     this.ready = this.load();
   }
@@ -56,15 +57,56 @@ export default class World {
 
     this.setDebug();
     document.getElementById("loading").style.display = "none";
-    // Frame the default flight once everything (incl. the camera rig) has settled.
     requestAnimationFrame(() => this.setActiveFlight(this.params?.flight ?? "All"));
     return this;
   }
 
+  /** Set view modes: 'table', 'human', or 'fly' with camera zoom distance multiplier */
+  setViewMode(mode, zoomFactor = 1.0) {
+    const vExag = this.params?.exaggeration ?? 1.0;
+    const cam = this.experience.camera;
+
+    if (mode === "table") {
+      // 1.2m tabletop diorama
+      this.currentScale = 0.05;
+      this.model.scale.set(0.05, 0.05 * vExag, 0.05);
+      this.model.position.set(0, 0.85, -0.8);
+      this.model.updateMatrixWorld(true);
+
+      if (cam?.controls) {
+        cam.controls.target.set(0, 0.85, -0.8);
+        cam.instance.position.set(0, 1.4, 0.2);
+        cam.instance.lookAt(0, 0.85, -0.8);
+        cam.controls.update();
+      }
+    } else if (mode === "human") {
+      // 1:1 true scale, grounded, camera at 1.7m human eye height
+      this.currentScale = 1.0;
+      this.model.scale.set(1.0, 1.0, 1.0);
+      this.model.position.set(0, 0, 0);
+      this.model.updateMatrixWorld(true);
+
+      if (cam?.controls) {
+        const box = new THREE.Box3().setFromObject(this.terrain.mesh);
+        const center = box.getCenter(new THREE.Vector3());
+        
+        cam.instance.position.set(center.x, center.y + 1.7, center.z + 5.0);
+        cam.controls.target.set(center.x, center.y + 1.6, center.z);
+        cam.instance.lookAt(cam.controls.target);
+        cam.controls.update();
+      }
+    } else {
+      // Normal fly scale at MODEL_Y
+      this.currentScale = 1.0;
+      this.model.scale.set(1.0, vExag, 1.0);
+      this.model.position.set(0, MODEL_Y, 0);
+      this.model.updateMatrixWorld(true);
+      // zoomFactor < 1.0 moves closer, > 1.0 moves further
+      this.focus(null, zoomFactor);
+    }
+  }
+
   setActiveFlight(id) {
-    // A scan brings the videos recorded during it; a video brings its scan.
-    // Videos share their scan's trajectory, so only one of them owns the hover:
-    // the selected flight is emphasised (hoverable), its relatives are subdued.
     const target = this.paths.find((p) => p.flight.id === id);
     const family = new Set([id, target?.flight.scan]);
     for (const p of this.paths) if (p.flight.scan === id) family.add(p.flight.id);
@@ -78,7 +120,6 @@ export default class World {
     this.refreshOrthos();
   }
 
-  /** A scan's model/ortho state changed (menu, dropdown or another user): keep the dropdowns in sync. */
   onModelChanged(path) {
     if (!this.params || !this.modelControls?.[path.flight.id]) return;
     this.params["model_" + path.flight.id] = path.representation;
@@ -86,12 +127,14 @@ export default class World {
     for (const c of this.modelControls[path.flight.id]) c.updateDisplay();
   }
 
-  /** Orthomosaics of the scans showing; each scan's menu decides whether it also drapes the terrain. */
   refreshOrthos() {
-    this.terrain.setOrthos(this.paths.filter((p) => p.visible && p.flight.ortho).map((p) => ({ spec: p.flight.ortho, onTerrain: p.orthoOnTerrain })));
+    this.terrain.setOrthos(
+      this.paths
+        .filter((p) => p.visible && p.flight.ortho)
+        .map((p) => ({ spec: p.flight.ortho, onTerrain: p.orthoOnTerrain }))
+    );
   }
 
-  /** A video segment was highlighted (k = -1: cleared): light up the scan photos shot during it. */
   onVideoSegment(videoPath, k) {
     const scan = this.paths.find((p) => p.flight.id === videoPath.flight.scan);
     if (!scan?.highlightWindow) return;
@@ -100,12 +143,18 @@ export default class World {
     scan.highlightWindow(u0 + c.t0, u0 + c.t1);
   }
 
-  /** Another user's hovered video segment (brahma callout relay). */
   onCalloutUpdate(data) {
     const pl = data?.payload;
-    if (pl?.menu) { // another user switched a scan's model
+    if (pl?.viewMode) {
+      this.setViewMode(pl.viewMode, pl.zoomFactor);
+      return;
+    }
+    if (pl?.menu) {
       const scan = this.paths.find((p) => p.flight.id === pl.menu);
-      if (scan) { if (pl.representation !== scan.representation) scan.setRepresentation(pl.representation); if (pl.orthoTerrain !== scan.orthoOnTerrain) scan.setOrthoOnTerrain(pl.orthoTerrain); }
+      if (scan) { 
+        if (pl.representation !== scan.representation) scan.setRepresentation(pl.representation); 
+        if (pl.orthoTerrain !== scan.orthoOnTerrain) scan.setOrthoOnTerrain(pl.orthoTerrain); 
+      }
       return;
     }
     if (!pl?.video) return;
@@ -113,25 +162,28 @@ export default class World {
     path?.setRemoteSegment?.(data.visible ? pl.segment : -1);
   }
 
-
-  /** Scale relief of everything geo (terrain, paths, scan meshes) about model y=0. */
   setExaggeration(v) {
     settings.verticalExaggeration = v;
-    this.model.scale.y = v;
+    this.model.scale.y = this.currentScale * v;
     this.terrain.setExaggeration(v);
-    for (const p of [this.panel, this.videoPanel]) p.scale.set(p.baseScale, p.baseScale / v, p.baseScale);
+    for (const p of [this.panel, this.videoPanel]) {
+      p.scale.set(p.baseScale, p.baseScale / v, p.baseScale);
+    }
   }
 
-  /** Move the orbit camera to frame a path (or the whole model when none). */
-  focus(path) {
+  focus(path, zoomFactor = 1.0) {
     const cam = this.experience.camera;
+    if (!cam?.controls) return;
+
     this.model.updateMatrixWorld(true);
     const box = path ? path.bounds() : new THREE.Box3().setFromObject(this.terrain.mesh);
     const center = box.getCenter(new THREE.Vector3());
     const radius = Math.max(box.getSize(new THREE.Vector3()).length() * 0.5, 0.15);
-    const dir = new THREE.Vector3(-0.6, 0.55, 0.6).normalize(); // from the south-west, elevated
+    const dir = new THREE.Vector3(-0.6, 0.55, 0.6).normalize();
+
     cam.controls.target.copy(center);
-    cam.instance.position.copy(center).addScaledVector(dir, radius * 1.7);
+    // Applying zoomFactor to distance directly changes proximity to terrain
+    cam.instance.position.copy(center).addScaledVector(dir, radius * 1.7 * zoomFactor);
     cam.instance.lookAt(center);
     cam.controls.update();
   }
@@ -139,15 +191,24 @@ export default class World {
   setDebug() {
     if (!this.debug.active) return;
     const ui = this.debug.ui;
+
+    const first = "All";
+    this.params = { flight: first, exaggeration: 1.0, imagery: 1.0, playAll: false, swath: true };
+
+    const z = ui.addFolder("Scale & Perspectives");
+    z.add({ human: () => this.setViewMode("human") }, "human").name("🚶 Human Scale (Walking)");
+    z.add({ table: () => this.setViewMode("table") }, "table").name("🪑 Table Diorama (0.05x)");
+    z.add({ drone: () => this.setViewMode("fly", 1.0) }, "drone").name("🚁 Drone Overview (1.0x)");
+    z.add({ zoomIn: () => this.setViewMode("fly", 0.45) }, "zoomIn").name("🔍 Zoom Close-Up (2.2x Closer)");
+    z.add({ zoomFar: () => this.setViewMode("fly", 2.2) }, "zoomFar").name("🌐 High Altitude Overview");
+
     const f = ui.addFolder("Flights");
     const options = { All: "All" };
     for (const p of this.paths) options[p.flight.name] = p.flight.id;
-    const first = "All"; // every scan visible; pick one (or a video) in the dropdown to hover it
-    this.params = { flight: first, exaggeration: 1.0, imagery: 1.0, playAll: false, swath: true };
     this.setActiveFlight(first);
     f.add(this.params, "flight", options).name("Sample path").onChange((v) => this.setActiveFlight(v));
     f.add({ unpin: () => { this.panel.setPinned(false); this.videoPanel.setPinned(false); } }, "unpin").name("Unpin panel");
-    // one "Model" dropdown per scan, mirroring the in-scene ScanMenu
+
     const scans = this.paths.filter((p) => p.flight.kind === "scan");
     this.modelControls = {};
     if (scans.length) {
@@ -166,12 +227,14 @@ export default class World {
         ];
       }
     }
+
     const videos = this.paths.filter((p) => p.flight.kind === "video");
     if (videos.length) {
       const v = ui.addFolder("Videos");
       v.add(this.params, "playAll").name("Play whole flight (when pinned)").onChange((on) => videos.forEach((p) => (p.playAll = on)));
       v.add(this.params, "swath").name("Ground swath").onChange((on) => videos.forEach((p) => { p.swathOn = on; p.swath.visible = on && p.segment >= 0; }));
     }
+
     const t = ui.addFolder("Terrain");
     t.add(this.params, "exaggeration", 0.5, 6, 0.1).name("Vertical ×").onChange((v) => this.setExaggeration(v));
     t.add(this.params, "imagery", 0, 1, 0.05).name("Imagery mix").onChange((v) => {

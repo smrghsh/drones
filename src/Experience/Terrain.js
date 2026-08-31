@@ -1,3 +1,9 @@
+/**
+ * Terrain rendering and interaction.
+ * Data: USGS 3DEP 2020 DSM plus USDA NAIP 2022 and flight orthomosaics.
+ * Heights are measured DSM elevations; selectable texture/source modes retain provenance.
+ * Performance: visual LODs never raycast; a 128x128 proxy handles pointer hits in desktop/XR.
+ */
 import * as THREE from "three";
 import { Experience } from "brahma-xr";
 import { METERS_PER_UNIT, settings, getSite, sceneToMetres, fromLocalMetres } from "./domain.js";
@@ -118,6 +124,14 @@ export default class Terrain extends THREE.Group {
     this.experience = new Experience();
     this.site = getSite();
     this.size = this.site.size_m / METERS_PER_UNIT;
+    this._lodPosition = new THREE.Vector3();
+    this._lodQuaternion = new THREE.Quaternion();
+    this._lodNextPosition = new THREE.Vector3();
+    this._lodNextQuaternion = new THREE.Quaternion();
+    this._lodLastMotion = performance.now();
+    this.shapeMode = "detail";
+    this.textureMode = "survey";
+    this.orthosEnabled = true;
     this.setProbe();
   }
 
@@ -259,6 +273,26 @@ export default class Terrain extends THREE.Group {
     );
     this.mesh.rotation.x = -Math.PI / 2;
     this.add(this.mesh);
+    // Pointer.hover() recursively raycasts every child of selectable Terrain.
+    // Never test the 500K-triangle visual mesh; a small interaction proxy below
+    // supplies the hit point and heightAt() supplies the exact displayed MSL.
+    this.mesh.raycast = () => {};
+    const proxySeg = 128;
+    const proxyGeometry = new THREE.PlaneGeometry(this.size, this.size, proxySeg, proxySeg);
+    const proxyPosition = proxyGeometry.attributes.position;
+    const proxyUv = proxyGeometry.attributes.uv;
+    for (let i = 0; i < proxyPosition.count; i++) {
+      const x = Math.round(proxyUv.getX(i) * (this.hw - 1));
+      const y = Math.round((1 - proxyUv.getY(i)) * (this.hh - 1));
+      proxyPosition.setZ(i, (this.heights[y * this.hw + x] - this.site.z_center) / METERS_PER_UNIT);
+    }
+    proxyPosition.needsUpdate = true; proxyGeometry.computeBoundingSphere();
+    this.raycastProxy = new THREE.Mesh(proxyGeometry, new THREE.MeshBasicMaterial({
+      side: THREE.DoubleSide, colorWrite: false, depthWrite: false,
+    }));
+    this.raycastProxy.rotation.x = -Math.PI / 2;
+    this.raycastProxy.name = "terrain-raycast-proxy";
+    this.add(this.raycastProxy);
     this.marker.raycast = () => {};
     this.label.raycast = () => {};
     this.experience.selectableObjects.push(this);
@@ -296,10 +330,22 @@ export default class Terrain extends THREE.Group {
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.NoColorSpace; tex.minFilter = tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = false;
     const size = meta.size_m / METERS_PER_UNIT;
-    const geom = new THREE.PlaneGeometry(size, size, n - 1, n - 1);
-    const pos = geom.attributes.position;
-    for (let i = 0; i < pos.count; i++) pos.setZ(i, (heights[i] - this.site.z_center) / METERS_PER_UNIT);
-    pos.needsUpdate = true; geom.computeBoundingSphere();
+    const makeGeometry = (segments) => {
+      const geom = new THREE.PlaneGeometry(size, size, segments, segments);
+      const pos = geom.attributes.position;
+      if (segments === n - 1) {
+        for (let i = 0; i < pos.count; i++) pos.setZ(i, (heights[i] - this.site.z_center) / METERS_PER_UNIT);
+      } else {
+        const uv = geom.attributes.uv;
+        for (let i = 0; i < pos.count; i++) {
+          const x = Math.round(uv.getX(i) * (n - 1));
+          const y = Math.round((1 - uv.getY(i)) * (n - 1));
+          pos.setZ(i, (heights[y * n + x] - this.site.z_center) / METERS_PER_UNIT);
+        }
+      }
+      pos.needsUpdate = true; geom.computeBoundingSphere();
+      return geom;
+    };
     const ox = meta.center_e / METERS_PER_UNIT, oz = -meta.center_n / METERS_PER_UNIT;
     const uniforms = {
       ...this.uniforms,
@@ -307,16 +353,72 @@ export default class Terrain extends THREE.Group {
       uOrigin: { value: new THREE.Vector2(ox, oz) },
       uCutMin: { value: new THREE.Vector2(1e9, 1e9) }, uCutMax: { value: new THREE.Vector2(1e9, 1e9) },
     };
-    const mesh = new THREE.Mesh(geom, new THREE.ShaderMaterial({ vertexShader, fragmentShader, uniforms }));
+    const material = new THREE.ShaderMaterial({ vertexShader, fragmentShader, uniforms });
+    const mesh = new THREE.Mesh(makeGeometry(n - 1), material);
+    const lowMesh = new THREE.Mesh(makeGeometry(Math.min(n - 1, 384)), material);
+    mesh.raycast = () => {};
+    lowMesh.raycast = () => {};
     mesh.rotation.x = -Math.PI / 2;
+    lowMesh.rotation.x = -Math.PI / 2;
     mesh.position.set(ox, 0, oz);
-    this.add(mesh);
-    this.detail = { meta, heights, n, mesh, half: meta.size_m / 2 };
+    lowMesh.position.copy(mesh.position);
+    lowMesh.visible = false;
+    this.add(mesh, lowMesh);
+    this.detail = { meta, heights, n, mesh, lowMesh, half: meta.size_m / 2 };
     // carve the coarse mesh (slightly inset so the seam is hidden under the patch edge)
     const inset = meta.gsd_m * 2 / METERS_PER_UNIT;
     this.uniforms.uCutMin.value.set(ox - size / 2 + inset, oz - size / 2 + inset);
     this.uniforms.uCutMax.value.set(ox + size / 2 - inset, oz + size / 2 - inset);
+    this.detailCutMin = this.uniforms.uCutMin.value.clone();
+    this.detailCutMax = this.uniforms.uCutMax.value.clone();
     console.log(`terrain detail: ${meta.size_m} m @ ${meta.gsd_m} m (${n}x${n})`);
+  }
+
+  /** Use visible as a render LOD: light terrain in motion, full detail at rest. */
+  update() {
+    if (!this.detail?.lowMesh) return;
+    const renderer = this.experience.renderer.instance;
+    const camera = renderer.xr.isPresenting
+      ? renderer.xr.getCamera(this.experience.camera.instance)
+      : this.experience.camera.instance;
+    camera.getWorldPosition(this._lodNextPosition);
+    camera.getWorldQuaternion(this._lodNextQuaternion);
+    const moved = this._lodNextPosition.distanceToSquared(this._lodPosition) > 1e-8
+      || 1 - Math.abs(this._lodNextQuaternion.dot(this._lodQuaternion)) > 1e-8;
+    const now = performance.now();
+    if (moved) this._lodLastMotion = now;
+    this._lodPosition.copy(this._lodNextPosition);
+    this._lodQuaternion.copy(this._lodNextQuaternion);
+    this.isNavigating = moved || now - this._lodLastMotion < 180;
+    const useDetail = this.shapeMode === "detail";
+    const useLow = renderer.xr.isPresenting || this.isNavigating;
+    this.detail.mesh.visible = useDetail && !useLow;
+    this.detail.lowMesh.visible = useDetail && useLow;
+  }
+
+  setShapeMode(mode) {
+    this.shapeMode = mode;
+    this.scale.y = mode === "flat" ? 0.0001 : 1;
+    const detail = mode === "detail";
+    if (this.detail) {
+      this.detail.mesh.visible = detail;
+      this.detail.lowMesh.visible = false;
+    }
+    if (detail && this.detailCutMin) {
+      this.uniforms.uCutMin.value.copy(this.detailCutMin);
+      this.uniforms.uCutMax.value.copy(this.detailCutMax);
+    } else {
+      this.uniforms.uCutMin.value.set(1e9, 1e9);
+      this.uniforms.uCutMax.value.set(1e9, 1e9);
+    }
+  }
+
+  setTextureMode(mode) {
+    this.textureMode = mode;
+    this.orthosEnabled = mode === "survey";
+    this.uniforms.uImageryMix.value = mode === "elevation" ? 0 : 1;
+    const gate = this.uniforms.uOrthoGate.value;
+    if (!this.orthosEnabled) gate.set(0, 0);
   }
 
   /** Material that drapes the aerial imagery onto any mesh placed in the model frame. */
@@ -347,7 +449,7 @@ export default class Terrain extends THREE.Group {
     const gate = this.uniforms.uOrthoGate.value;
     for (let i = 0; i < 2; i++) {
       const spec = entries[i]?.spec ?? null;
-      gate.setComponent(i, entries[i]?.onTerrain === false ? 0 : 1);
+      gate.setComponent(i, this.orthosEnabled && entries[i]?.onTerrain !== false ? 1 : 0);
       if (!spec) { this.uniforms["uOrthoOn" + i].value = 0; this.orthoSlots[i] = null; continue; }
       if (this.orthoSlots[i] !== spec) {
         if (!this.orthoTex.has(spec)) {
