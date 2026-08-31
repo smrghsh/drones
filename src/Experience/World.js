@@ -29,6 +29,8 @@ export default class World {
     this.model.position.y = MODEL_Y;
     this.scene.add(this.model);
 
+    // will access debug ui to implement table feature
+
     this.paths = [];
     this.ride = { state: "inactive", path: null, time: 0, speed: 1, saved: null };
     this._ridePoint = new THREE.Vector3();
