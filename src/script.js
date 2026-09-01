@@ -1,3 +1,4 @@
+/** App entry point with one renderer-driven update loop for desktop and WebXR. */
 import "./style.css";
 import { Experience } from "brahma-xr";
 import World from "./Experience/World.js";
@@ -23,6 +24,7 @@ const experience = new Experience({
 
 experience.world = new World();
 window.experience = experience; // handy for console debugging / automation
+installAnimationLoop(experience);
 
 // Loading overlay — hides once every source in sources.js has loaded
 // (World hides the #loading overlay once terrain + flights are fetched.)
@@ -43,4 +45,32 @@ if (import.meta.hot) {
   });
 }
 
+/**
+ * brahma's Time loop uses window.requestAnimationFrame, which browsers may
+ * pause during an immersive session. Drive Time from Three's animation loop
+ * so World.update(), VR menu input, and FPV motion run on every XR frame too.
+ */
+function installAnimationLoop(app) {
+  app.time.stop();
+  let previousFrame = performance.now();
+
+  app.renderer.instance.setAnimationLoop((frameTime) => {
+    const now = Number.isFinite(frameTime) ? frameTime : performance.now();
+    app.time.delta = Math.min(Math.max(now - previousFrame, 0), 100);
+    app.time.current = Date.now();
+    app.time.elapsed = app.time.current - app.time.start;
+    previousFrame = now;
+
+    app.controller.update();
+    app.time.trigger("tick");
+    if (app.networking?.canSendEmbodiment) {
+      app.networking.sendEmbodiment(
+        app.camera.instance.matrixWorld,
+        app.controller.controller1.matrixWorld,
+        app.controller.controller2.matrixWorld,
+      );
+    }
+    app.renderer.instance.render(app.scene, app.camera.instance);
+  });
+}
 
