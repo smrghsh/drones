@@ -1,3 +1,4 @@
+/** Desktop FPV controls; immersive VR uses the left-controller VRMenu instead. */
 import * as THREE from "three";
 import { Experience } from "brahma-xr";
 
@@ -11,10 +12,22 @@ export default class RideControls extends THREE.Group {
     this.world = world;
     this.items = [];
     this.visible = false;
+    this.requestedVisible = false;
     this._camPos = new THREE.Vector3();
     this._camQuat = new THREE.Quaternion();
     this._forward = new THREE.Vector3();
     this.build();
+
+    const xr = this.experience.renderer.instance.xr;
+    this.xrPresenting = xr.isPresenting;
+    xr.addEventListener("sessionstart", () => {
+      this.xrPresenting = true;
+      this.syncVisibility();
+    });
+    xr.addEventListener("sessionend", () => {
+      this.xrPresenting = false;
+      this.syncVisibility();
+    });
   }
 
   build() {
@@ -74,6 +87,13 @@ export default class RideControls extends THREE.Group {
   refresh() { for (const item of this.items) this.draw(item); }
 
   setVisible(visible) {
+    this.requestedVisible = visible;
+    this.syncVisibility();
+  }
+
+  /** Hide the desktop panel and remove its raycast targets throughout XR. */
+  syncVisibility() {
+    const visible = this.requestedVisible && !this.xrPresenting;
     this.visible = visible;
     const selectable = this.experience.selectableObjects;
     for (const item of this.items) {
