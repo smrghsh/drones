@@ -145,6 +145,18 @@ In a headset, start with **Comfort horizon** enabled and a low speed. Stop if
 you feel discomfort; the full-pitch mode can create stronger vection and is
 more likely to cause cybersickness.
 
+### VR controller menu
+
+Entering VR displays a compact vertical control list above the **left
+controller**. Aim the ray from the **right controller** and press the **right
+index trigger** to select a row. A held trigger activates a row only once; it
+must be released before another selection. The right side/grip button is never
+used by this menu and remains reserved for brahma-xr locomotion.
+
+The list mirrors the main desktop controls needed in-headset: flight and view
+selection, scan model and ortho selection, FPV transport/speed/comfort,
+ground-swath visibility, vertical exaggeration, and imagery mix.
+
 ## Topography controls
 
 The desktop controls are in `#debug` → **Terrain**. In VR, the same scientific
