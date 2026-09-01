@@ -14,11 +14,11 @@ import VRMenu from "./VRMenu.js";
 
 const PATH_COLORS = [0xffb347, 0x5ec8ff, 0xff6b9d, 0x9dff6b];
 const VIEW_PRESETS = [
-  { label: "Human scale", mode: "human", zoom: 1 },
-  { label: "Table diorama", mode: "table", zoom: 1 },
-  { label: "Drone overview", mode: "fly", zoom: 1 },
-  { label: "Close-up", mode: "fly", zoom: 0.45 },
-  { label: "High altitude", mode: "fly", zoom: 2.2 },
+  { key: "human", label: "Human Scale (Walking)", mode: "human", zoom: 1 },
+  { key: "table", label: "Table Diorama (0.05x)", mode: "table", zoom: 1 },
+  { key: "drone", label: "Drone Overview (1.0x)", mode: "fly", zoom: 1 },
+  { key: "close", label: "Zoom Close-Up (2.2x Closer)", mode: "fly", zoom: 0.45 },
+  { key: "high", label: "High Altitude Overview", mode: "fly", zoom: 2.2 },
 ];
 
 export default class World {
@@ -87,6 +87,7 @@ export default class World {
 
   /** Set view modes: 'table', 'human', or 'fly' with camera zoom distance multiplier */
   setViewMode(mode, zoomFactor = 1.0) {
+    zoomFactor = Math.max(Number(zoomFactor) || 1, 0.01);
     const preset = VIEW_PRESETS.findIndex((entry) => entry.mode === mode && entry.zoom === zoomFactor);
     if (preset >= 0) this.viewPresetIndex = preset;
     const vExag = this.params?.exaggeration ?? 1.0;
@@ -109,7 +110,7 @@ export default class World {
     } else if (mode === "human") {
       // 1:1 true scale, grounded, camera at 1.7m human eye height
       this.currentScale = 1.0;
-      this.model.scale.set(1.0, 1.0, 1.0);
+      this.model.scale.set(1.0, vExag, 1.0);
       this.model.position.set(0, 0, 0);
       this.model.updateMatrixWorld(true);
 
@@ -124,8 +125,10 @@ export default class World {
       }
     } else {
       // Normal fly scale at MODEL_Y
-      this.currentScale = 1.0;
-      this.model.scale.set(1.0, vExag, 1.0);
+      // In XR, scale the world instead of moving or rotating the tracked rig.
+      // This makes close/high presets distinct while preserving free head pose.
+      this.currentScale = moveDesktopCamera ? 1.0 : 1 / zoomFactor;
+      this.model.scale.set(this.currentScale, this.currentScale * vExag, this.currentScale);
       this.model.position.set(0, MODEL_Y, 0);
       this.model.updateMatrixWorld(true);
       // zoomFactor < 1.0 moves closer, > 1.0 moves further
@@ -135,13 +138,21 @@ export default class World {
   }
 
   viewPresetLabel() {
-    return VIEW_PRESETS[this.viewPresetIndex]?.label ?? "Drone overview";
+    return VIEW_PRESETS[this.viewPresetIndex]?.label ?? "Drone Overview (1.0x)";
+  }
+
+  viewPresetOptions() {
+    return VIEW_PRESETS;
+  }
+
+  setViewPreset(index) {
+    const preset = VIEW_PRESETS[index];
+    if (!preset) return;
+    this.setViewMode(preset.mode, preset.zoom);
   }
 
   cycleViewMode() {
-    this.viewPresetIndex = (this.viewPresetIndex + 1) % VIEW_PRESETS.length;
-    const preset = VIEW_PRESETS[this.viewPresetIndex];
-    this.setViewMode(preset.mode, preset.zoom);
+    this.setViewPreset((this.viewPresetIndex + 1) % VIEW_PRESETS.length);
   }
 
   setActiveFlight(id) {

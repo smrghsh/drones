@@ -162,6 +162,11 @@ Start selects the first available flight automatically. **Choose scan model…**
 opens direct buttons for every representation the active scan provides,
 including Gaussian splats when available.
 
+Choose **Scale & perspectives…** for direct Human Scale, Table Diorama, Drone
+Overview, Zoom Close-Up, and High Altitude choices. In VR, the aerial presets
+scale the world without overriding tracked head rotation; changing perspective
+first stops an active FPV ride so the rig can be restored safely.
+
 ## Topography controls
 
 The desktop controls are in `#debug` → **Terrain**. In VR, the same scientific

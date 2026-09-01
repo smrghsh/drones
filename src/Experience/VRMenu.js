@@ -61,7 +61,7 @@ export default class VRMenu extends THREE.Group {
       this.button("speed", "Ride speed", () => this.world.cycleRideSpeed(), () => `${this.world.ride.speed.toFixed(2).replace(/0$/, "")}×`),
       this.button("comfort", "Comfort horizon", () => this.world.toggleRideComfort(), () => this.world.ride.comfort ? "ON" : "OFF"),
       this.button("swath", "Ground swath", () => this.world.toggleGroundSwath(), () => this.world.params?.swath ? "ON" : "OFF"),
-      this.button("view", "View scale", () => this.world.cycleViewMode(), () => this.world.viewPresetLabel()),
+      this.button("chooseView", "Scale & perspectives…", () => this.showPage("views"), () => this.world.viewPresetLabel()),
       this.button("vertical", "Vertical exaggeration", () => this.world.cycleExaggeration(), () => `${(this.world.params?.exaggeration ?? 1).toFixed(1)}×`),
       this.button("imagery", "Imagery mix", () => this.world.cycleImageryMix(), () => (this.world.params?.imagery ?? 1).toFixed(2)),
       this.hint("Aim RIGHT ray · INDEX TRIGGER selects"),
@@ -116,6 +116,23 @@ export default class VRMenu extends THREE.Group {
     return definitions;
   }
 
+  viewDefinitions() {
+    return [
+      this.title("SCALE & PERSPECTIVES"),
+      ...this.world.viewPresetOptions().map((preset, index) => this.button(
+        `view:${preset.key}`,
+        preset.label,
+        () => {
+          if (this.world.ride.state !== "inactive") this.world.stopRide();
+          this.world.setViewPreset(index);
+        },
+        () => this.world.viewPresetIndex === index ? "SELECTED" : "",
+      )),
+      this.button("back", "← Back to controls", () => this.showPage("main")),
+      this.hint("Changing perspective stops an active FPV ride"),
+    ];
+  }
+
   title(label) {
     return { key: "title", label };
   }
@@ -131,9 +148,10 @@ export default class VRMenu extends THREE.Group {
   showPage(page) {
     this.clearItems();
     this.page = page;
-    const definitions = page === "flights"
-      ? this.flightDefinitions()
-      : page === "models" ? this.modelDefinitions() : this.mainDefinitions();
+    let definitions = this.mainDefinitions();
+    if (page === "flights") definitions = this.flightDefinitions();
+    if (page === "models") definitions = this.modelDefinitions();
+    if (page === "views") definitions = this.viewDefinitions();
     definitions.forEach((definition, index) => this.addItem(definition, index));
     this.refresh();
   }
