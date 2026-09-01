@@ -156,6 +156,10 @@ used by this menu and remains reserved for brahma-xr locomotion.
 The list mirrors the main desktop controls needed in-headset: flight and view
 selection, scan model and ortho selection, FPV transport/speed/comfort,
 ground-swath visibility, vertical exaggeration, and imagery mix.
+Use **Previous flight** and **Next flight** to choose a specific route before
+starting FPV. If no route has been chosen, Start selects the first available
+flight automatically. **Scan model** cycles through every representation that
+the active scan provides, including Gaussian splats when available.
 
 ## Topography controls
 

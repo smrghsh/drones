@@ -168,10 +168,10 @@ export default class World {
     return id === "All" ? "All flights" : this.paths.find((path) => path.flight.id === id)?.flight.name ?? id;
   }
 
-  cycleActiveFlight() {
+  cycleActiveFlight(direction = 1) {
     const ids = ["All", ...this.paths.map((path) => path.flight.id)];
     const index = ids.indexOf(this.params?.flight ?? "All");
-    this.setActiveFlight(ids[(index + 1) % ids.length]);
+    this.setActiveFlight(ids[(index + direction + ids.length) % ids.length]);
   }
 
   /** Make any imported flight path available to the FPV transport controls. */
@@ -249,7 +249,15 @@ export default class World {
   }
 
   startRide() {
-    const ride = this.ride, path = ride.path;
+    const ride = this.ride;
+    if (!ride.path) {
+      const firstPath = this.paths.find((path) => typeof path.pointAt === "function");
+      if (firstPath) {
+        this.setActiveFlight(firstPath.flight.id);
+        this.setRideTarget(firstPath);
+      }
+    }
+    const path = ride.path;
     if (!path || !this.rideDuration(path) || ride.state === "playing") return;
     if (ride.state === "paused") {
       ride.state = "playing";

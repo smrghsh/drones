@@ -15,7 +15,17 @@ export default class VRMenu extends THREE.Group {
     this.world = world;
     this.items = [];
     this.triggerArmed = true;
+    this.rightTriggerActive = false;
+    this.hoveredItem = null;
+    this.boundRightController = null;
     this.visible = false;
+    this.onRightTriggerStart = () => {
+      this.rightTriggerActive = true;
+      if (this.hoveredItem) this.activate(this.hoveredItem);
+    };
+    this.onRightTriggerEnd = () => {
+      this.rightTriggerActive = false;
+    };
 
     // Sit just above and forward of the left controller like a wrist-mounted list.
     this.position.set(0.055, 0.105, -0.16);
@@ -32,7 +42,9 @@ export default class VRMenu extends THREE.Group {
   build() {
     const defs = [
       ["title", "VR CONTROLS", null],
-      ["flight", "Flight path", () => this.world.cycleActiveFlight()],
+      ["flight", "Selected flight", null],
+      ["previousFlight", "← Previous flight", () => this.world.cycleActiveFlight(-1)],
+      ["nextFlight", "Next flight →", () => this.world.cycleActiveFlight(1)],
       ["view", "View scale", () => this.world.cycleViewMode()],
       ["model", "Scan model", () => this.world.cycleActiveScanModel()],
       ["ortho", "Ortho on terrain", () => this.world.toggleActiveScanOrtho()],
@@ -76,8 +88,12 @@ export default class VRMenu extends THREE.Group {
       };
       if (action) {
         mesh.selectable = true;
-        mesh.onHover = () => { item.hover = true; this.draw(item); };
-        mesh.onUnhover = () => { item.hover = false; this.draw(item); };
+        mesh.onHover = () => { item.hover = true; this.hoveredItem = item; this.draw(item); };
+        mesh.onUnhover = () => {
+          item.hover = false;
+          if (this.hoveredItem === item) this.hoveredItem = null;
+          this.draw(item);
+        };
         mesh.onSelect = () => this.activate(item);
       }
       this.items.push(item);
@@ -88,7 +104,7 @@ export default class VRMenu extends THREE.Group {
 
   enabled(item) {
     const state = this.world.ride.state;
-    if (item.key === "start") return Boolean(this.world.ride.path) && state !== "playing";
+    if (item.key === "start") return this.world.paths.some((path) => typeof path.pointAt === "function") && state !== "playing";
     if (item.key === "pause") return state === "playing";
     if (item.key === "stop") return state !== "inactive";
     if (item.key === "model") return Boolean(this.world.activeScan());
@@ -114,7 +130,7 @@ export default class VRMenu extends THREE.Group {
     const trigger = this.experience.controller?.rightController?.padControls?.primaryTrigger;
     // Face buttons can also invoke brahma's generic pointer. Reject them here:
     // this wrist menu is deliberately index-trigger-only; squeeze remains locomotion.
-    if (!trigger?.isPressed || !this.triggerArmed || !this.enabled(item)) return;
+    if (!(this.rightTriggerActive || trigger?.isPressed) || !this.triggerArmed || !this.enabled(item)) return;
     this.triggerArmed = false;
     item.action();
     this.refresh();
@@ -166,8 +182,18 @@ export default class VRMenu extends THREE.Group {
     if (!this.visible) return;
     const leftController = this.experience.controller?.leftController;
     if (leftController && this.parent !== leftController) leftController.add(this);
-    const trigger = this.experience.controller?.rightController?.padControls?.primaryTrigger;
-    if (!trigger?.isPressed) this.triggerArmed = true;
+    const rightController = this.experience.controller?.rightController;
+    if (rightController && this.boundRightController !== rightController) {
+      this.boundRightController?.removeEventListener("selectstart", this.onRightTriggerStart);
+      this.boundRightController?.removeEventListener("selectend", this.onRightTriggerEnd);
+      this.boundRightController = rightController;
+      // WebXR select events are the index trigger. We intentionally never
+      // subscribe to squeeze events because squeeze/grip remains locomotion.
+      rightController.addEventListener("selectstart", this.onRightTriggerStart);
+      rightController.addEventListener("selectend", this.onRightTriggerEnd);
+    }
+    const trigger = rightController?.padControls?.primaryTrigger;
+    if (!this.rightTriggerActive && !trigger?.isPressed) this.triggerArmed = true;
   }
 }
 
