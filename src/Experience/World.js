@@ -1,3 +1,4 @@
+/** World wiring for terrain, flights, viewpoints, and the comfort-aware FPV ride. */
 import * as THREE from "three";
 import { Experience, Environment } from "brahma-xr";
 import { setSite, MODEL_Y, settings } from "./domain.js";
@@ -8,6 +9,7 @@ import FlightPath from "./FlightPath.js";
 import SamplePanel from "./SamplePanel.js";
 import VideoPath from "./VideoPath.js";
 import VideoPanel from "./VideoPanel.js";
+import RideControls from "./RideControls.js";
 
 const PATH_COLORS = [0xffb347, 0x5ec8ff, 0xff6b9d, 0x9dff6b];
 
@@ -27,6 +29,12 @@ export default class World {
 
     this.currentScale = 1.0;
     this.paths = [];
+    this.ride = { state: "inactive", path: null, time: 0, speed: 1, comfort: true, saved: null };
+    this._ridePoint = new THREE.Vector3();
+    this._rideAhead = new THREE.Vector3();
+    this._rideDirection = new THREE.Vector3();
+    this._rideForward = new THREE.Vector3(0, 0, -1);
+    this._rideOffset = new THREE.Vector3();
     this.ready = this.load();
   }
 
@@ -43,6 +51,8 @@ export default class World {
     this.model.add(this.panel);
     this.videoPanel = new VideoPanel();
     this.model.add(this.videoPanel);
+    this.rideControls = new RideControls(this);
+    this.scene.add(this.rideControls);
 
     const index = await fetch("./flights/index.json").then((r) => r.json());
     const flights = await Promise.all(index.map((f) => fetch(f.file).then((r) => r.json())));
@@ -108,6 +118,8 @@ export default class World {
 
   setActiveFlight(id) {
     const target = this.paths.find((p) => p.flight.id === id);
+    if (this.ride.state !== "inactive" && target !== this.ride.path) this.stopRide();
+    if (target) this.setRideTarget(target);
     const family = new Set([id, target?.flight.scan]);
     for (const p of this.paths) if (p.flight.scan === id) family.add(p.flight.id);
     for (const p of this.paths) {
@@ -118,6 +130,117 @@ export default class World {
     }
     this.focus(target);
     this.refreshOrthos();
+  }
+
+  /** Make any imported flight path available to the FPV transport controls. */
+  setRideTarget(path) {
+    if (!path?.pointAt || (this.ride.state !== "inactive" && this.ride.path !== path)) return;
+    this.ride.path = path;
+    this.rideControls?.setVisible(true);
+    this.rideControls?.refresh();
+  }
+
+  rideDuration(path = this.ride.path) {
+    if (!path) return 0;
+    return typeof path.rideDuration === "function"
+      ? path.rideDuration()
+      : Math.max(0, Number(path.flight.duration_s) || 0);
+  }
+
+  startRide() {
+    const ride = this.ride, path = ride.path;
+    if (!path || !this.rideDuration(path) || ride.state === "playing") return;
+    if (ride.state === "paused") {
+      ride.state = "playing";
+      this.rideControls.refresh();
+      return;
+    }
+
+    const group = this.experience.cameraGroup;
+    const camera = this.experience.camera;
+    const locomotion = this.experience.controller?.locomotion;
+    ride.saved = {
+      groupPosition: group.position.clone(),
+      groupQuaternion: group.quaternion.clone(),
+      cameraPosition: camera.instance.position.clone(),
+      cameraQuaternion: camera.instance.quaternion.clone(),
+      controlsEnabled: camera.controls?.enabled,
+      locomotionUpdate: locomotion?.update,
+    };
+    ride.xr = this.experience.isXRActive();
+    ride.time = 0;
+    ride.anchor = new THREE.Vector3();
+    if (ride.xr) {
+      group.updateMatrixWorld(true);
+      const xrCamera = this.experience.renderer.instance.xr.getCamera(camera.instance);
+      xrCamera.getWorldPosition(ride.anchor);
+      group.worldToLocal(ride.anchor);
+    } else {
+      camera.instance.position.set(0, 0, 0);
+      camera.instance.quaternion.identity();
+    }
+    if (camera.controls) camera.controls.enabled = false;
+    if (locomotion) locomotion.update = () => {};
+    ride.state = "playing";
+    this.updateRidePose();
+    this.rideControls.refresh();
+  }
+
+  pauseRide() {
+    if (this.ride.state !== "playing") return;
+    this.ride.state = "paused";
+    this.rideControls.refresh();
+  }
+
+  stopRide() {
+    const ride = this.ride;
+    if (ride.state === "inactive") return;
+    const saved = ride.saved, group = this.experience.cameraGroup, camera = this.experience.camera;
+    if (saved) {
+      group.position.copy(saved.groupPosition);
+      group.quaternion.copy(saved.groupQuaternion);
+      camera.instance.position.copy(saved.cameraPosition);
+      camera.instance.quaternion.copy(saved.cameraQuaternion);
+      if (camera.controls) {
+        camera.controls.enabled = saved.controlsEnabled;
+        camera.controls.update();
+      }
+      if (this.experience.controller?.locomotion && saved.locomotionUpdate) {
+        this.experience.controller.locomotion.update = saved.locomotionUpdate;
+      }
+    }
+    ride.state = "inactive";
+    ride.time = 0;
+    ride.saved = null;
+    this.rideControls.refresh();
+  }
+
+  /** Put the desktop camera or complete XR rig at the drone's interpolated pose. */
+  updateRidePose() {
+    const ride = this.ride, path = ride.path, duration = this.rideDuration(path);
+    if (!path || ride.state === "inactive" || !duration) return;
+    const t = THREE.MathUtils.clamp(ride.time, 0, duration);
+    path.localToWorld(path.pointAt(t, this._ridePoint));
+    path.localToWorld(path.pointAt(Math.min(t + 0.5, duration), this._rideAhead));
+    this._rideDirection.subVectors(this._rideAhead, this._ridePoint);
+    if (this._rideDirection.lengthSq() < 1e-8 && t > 0) {
+      path.localToWorld(path.pointAt(Math.max(0, t - 0.5), this._rideAhead));
+      this._rideDirection.subVectors(this._ridePoint, this._rideAhead);
+    }
+    if (ride.comfort) this._rideDirection.y = 0;
+    if (this._rideDirection.lengthSq() < 1e-8) this._rideDirection.set(0, 0, -1);
+    this._rideDirection.normalize();
+
+    const group = this.experience.cameraGroup;
+    group.quaternion.setFromUnitVectors(this._rideForward, this._rideDirection);
+    this._ridePoint.y += 0.01;
+    if (ride.xr) {
+      this._rideOffset.copy(ride.anchor).applyQuaternion(group.quaternion);
+      group.position.copy(this._ridePoint).sub(this._rideOffset);
+    } else {
+      group.position.copy(this._ridePoint);
+    }
+    group.updateMatrixWorld(true);
   }
 
   onModelChanged(path) {
@@ -193,7 +316,7 @@ export default class World {
     const ui = this.debug.ui;
 
     const first = "All";
-    this.params = { flight: first, exaggeration: 1.0, imagery: 1.0, playAll: false, swath: true };
+    this.params = { flight: first, exaggeration: 1.0, imagery: 1.0, playAll: false, swath: true, rideSpeed: 1, rideComfort: true };
 
     const z = ui.addFolder("Scale & Perspectives");
     z.add({ human: () => this.setViewMode("human") }, "human").name("🚶 Human Scale (Walking)");
@@ -208,6 +331,15 @@ export default class World {
     this.setActiveFlight(first);
     f.add(this.params, "flight", options).name("Sample path").onChange((v) => this.setActiveFlight(v));
     f.add({ unpin: () => { this.panel.setPinned(false); this.videoPanel.setPinned(false); } }, "unpin").name("Unpin panel");
+
+    const fpv = ui.addFolder("FPV ride");
+    fpv.add(this.params, "rideSpeed", 0.25, 4, 0.25).name("Speed ×")
+      .onChange((speed) => (this.ride.speed = speed));
+    fpv.add(this.params, "rideComfort").name("Comfort horizon")
+      .onChange((comfort) => (this.ride.comfort = comfort));
+    fpv.add({ start: () => this.startRide() }, "start").name("Start / resume");
+    fpv.add({ pause: () => this.pauseRide() }, "pause").name("Pause");
+    fpv.add({ stop: () => this.stopRide() }, "stop").name("Stop / return");
 
     const scans = this.paths.filter((p) => p.flight.kind === "scan");
     this.modelControls = {};
@@ -243,8 +375,14 @@ export default class World {
   }
 
   update() {
+    if (this.ride.state === "playing") {
+      this.ride.time += this.experience.time.delta * 0.001 * this.ride.speed;
+      if (this.ride.time >= this.rideDuration()) this.stopRide();
+      else this.updateRidePose();
+    }
     this.panel?.update();
     this.videoPanel?.update();
     for (const p of this.paths) p.menu?.update();
+    this.rideControls?.update();
   }
 }

@@ -1,3 +1,4 @@
+/** Flight-path rendering plus time interpolation used by the FPV ride. */
 import * as THREE from "three";
 import { Line2 } from "three/addons/lines/Line2.js";
 import { LineGeometry } from "three/addons/lines/LineGeometry.js";
@@ -276,6 +277,7 @@ export default class FlightPath extends THREE.Group {
     if (!this.panel.pinned) this.panel.show(s.sample, this.flight, this.localToWorld(s.position.clone()), this.uiScale);
   }
   onSelect(worldPoint) {
+    this.experience.world?.setRideTarget?.(this);
     if (this.panel.pinned) {
       this.panel.setPinned(false);
       if (worldPoint) this.setSphere(worldPoint);
@@ -293,6 +295,47 @@ export default class FlightPath extends THREE.Group {
       if (d < bd) { bd = d; best = i; }
     });
     return { sample: this.flight.samples[best], position: this.samplePositions[best], index: best };
+  }
+
+  /** Seconds available to ride, derived from capture timestamps when present. */
+  rideDuration() {
+    const samples = this.flight.samples;
+    if (samples.length < 2) return 0;
+    const elapsed = Number(samples.at(-1).utc) - Number(samples[0].utc);
+    return Number.isFinite(elapsed) && elapsed > 0 ? elapsed : samples.length - 1;
+  }
+
+  /** Interpolate a local scene point at `seconds` into this mission. */
+  pointAt(seconds, target = new THREE.Vector3()) {
+    const samples = this.flight.samples;
+    if (!samples.length) return target.set(0, 0, 0);
+    if (samples.length === 1) return target.copy(this.samplePositions[0]);
+
+    const duration = this.rideDuration();
+    const elapsed = THREE.MathUtils.clamp(Number(seconds) || 0, 0, duration);
+    const firstUtc = Number(samples[0].utc);
+    const timestampsValid = Number.isFinite(firstUtc)
+      && Number.isFinite(Number(samples.at(-1).utc))
+      && Number(samples.at(-1).utc) > firstUtc;
+
+    let upper = 1;
+    if (timestampsValid) {
+      const utc = firstUtc + elapsed;
+      let low = 1, high = samples.length - 1;
+      while (low < high) {
+        const middle = (low + high) >> 1;
+        if (Number(samples[middle].utc) < utc) low = middle + 1;
+        else high = middle;
+      }
+      upper = low;
+      const a = Number(samples[upper - 1].utc), b = Number(samples[upper].utc);
+      const alpha = b > a ? (utc - a) / (b - a) : 0;
+      return target.copy(this.samplePositions[upper - 1]).lerp(this.samplePositions[upper], alpha);
+    }
+
+    const position = duration > 0 ? elapsed / duration * (samples.length - 1) : 0;
+    upper = Math.min(Math.floor(position) + 1, samples.length - 1);
+    return target.copy(this.samplePositions[upper - 1]).lerp(this.samplePositions[upper], position - (upper - 1));
   }
 
   /**
