@@ -33,6 +33,8 @@ export default class VRMenu extends THREE.Group {
     };
     this.onRightTriggerEnd = () => {
       this.rightTriggerActive = false;
+      this.triggerArmed = true;
+      this.wasTriggerPressed = false;
     };
 
     // Wrist-mounted list just above and forward of the left controller.
