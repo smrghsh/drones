@@ -35,6 +35,8 @@ export default class World {
     this._rideDirection = new THREE.Vector3();
     this._rideForward = new THREE.Vector3(0, 0, -1);
     this._rideOffset = new THREE.Vector3();
+    this._rideLookEuler = new THREE.Euler(0, 0, 0, "YXZ");
+    this._rideLookAbort = null;
     this.ready = this.load();
   }
 
@@ -166,6 +168,8 @@ export default class World {
       cameraQuaternion: camera.instance.quaternion.clone(),
       controlsEnabled: camera.controls?.enabled,
       locomotionUpdate: locomotion?.update,
+      canvasCursor: this.experience.canvas.style.cursor,
+      canvasTouchAction: this.experience.canvas.style.touchAction,
     };
     ride.xr = this.experience.isXRActive();
     ride.time = 0;
@@ -177,7 +181,8 @@ export default class World {
       group.worldToLocal(ride.anchor);
     } else {
       camera.instance.position.set(0, 0, 0);
-      camera.instance.quaternion.identity();
+      this._rideLookEuler.set(0, 0, 0);
+      this.enableRideLook();
     }
     if (camera.controls) camera.controls.enabled = false;
     if (locomotion) locomotion.update = () => {};
@@ -190,6 +195,59 @@ export default class World {
     if (this.ride.state !== "playing") return;
     this.ride.state = "paused";
     this.rideControls.refresh();
+  }
+
+  /** Let desktop and touch riders look freely while the rig follows the path. */
+  enableRideLook() {
+    this._rideLookAbort?.abort();
+    const canvas = this.experience.canvas;
+    const abort = new AbortController();
+    let pointerId = null, lastX = 0, lastY = 0;
+    const finish = (event) => {
+      if (event.pointerId !== pointerId) return;
+      pointerId = null;
+      canvas.style.cursor = "grab";
+    };
+
+    canvas.style.cursor = "grab";
+    canvas.style.touchAction = "none";
+    canvas.addEventListener("pointerdown", (event) => {
+      if (this.ride.state === "inactive" || this.ride.xr || event.button !== 0) return;
+      pointerId = event.pointerId;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      canvas.setPointerCapture?.(pointerId);
+      canvas.style.cursor = "grabbing";
+      event.preventDefault();
+    }, { signal: abort.signal });
+    canvas.addEventListener("pointermove", (event) => {
+      if (event.pointerId !== pointerId) return;
+      const dx = event.clientX - lastX, dy = event.clientY - lastY;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      this._rideLookEuler.y -= dx * 0.004;
+      this._rideLookEuler.x = THREE.MathUtils.clamp(
+        this._rideLookEuler.x - dy * 0.004,
+        -Math.PI / 2 + 0.02,
+        Math.PI / 2 - 0.02,
+      );
+      this.applyRideLook();
+      event.preventDefault();
+    }, { signal: abort.signal });
+    canvas.addEventListener("pointerup", finish, { signal: abort.signal });
+    canvas.addEventListener("pointercancel", finish, { signal: abort.signal });
+    this._rideLookAbort = abort;
+  }
+
+  applyRideLook() {
+    if (!this.ride.xr) this.experience.camera.instance.quaternion.setFromEuler(this._rideLookEuler);
+  }
+
+  disableRideLook(saved) {
+    this._rideLookAbort?.abort();
+    this._rideLookAbort = null;
+    this.experience.canvas.style.cursor = saved?.canvasCursor ?? "";
+    this.experience.canvas.style.touchAction = saved?.canvasTouchAction ?? "";
   }
 
   stopRide() {
@@ -209,6 +267,7 @@ export default class World {
         this.experience.controller.locomotion.update = saved.locomotionUpdate;
       }
     }
+    this.disableRideLook(saved);
     ride.state = "inactive";
     ride.time = 0;
     ride.saved = null;
@@ -239,6 +298,7 @@ export default class World {
       group.position.copy(this._ridePoint).sub(this._rideOffset);
     } else {
       group.position.copy(this._ridePoint);
+      this.applyRideLook();
     }
     group.updateMatrixWorld(true);
   }

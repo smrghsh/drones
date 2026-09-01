@@ -136,6 +136,11 @@ mission, and video trajectory can be ridden. **Speed ×** ranges from 0.25× to
 4×; 1× follows the recorded timing. Stop restores the exact camera/VR-rig pose
 from before the ride.
 
+While riding on desktop, drag anywhere on the 3D view with the mouse or one
+finger to look freely through 360° without leaving the path. In VR, the
+camera group carries the complete rig while headset tracking remains active,
+so turning your head controls the view independently of travel direction.
+
 In a headset, start with **Comfort horizon** enabled and a low speed. Stop if
 you feel discomfort; the full-pitch mode can create stronger vection and is
 more likely to cause cybersickness.
