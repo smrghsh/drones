@@ -277,6 +277,7 @@ export default class FlightPath extends THREE.Group {
     if (!this.panel.pinned) this.panel.show(s.sample, this.flight, this.localToWorld(s.position.clone()), this.uiScale);
   }
   onSelect(worldPoint) {
+    if (this.experience.world?.tryPlacePing?.(worldPoint)) return;
     this.experience.world?.setRideTarget?.(this);
     if (this.panel.pinned) {
       this.panel.setPinned(false);

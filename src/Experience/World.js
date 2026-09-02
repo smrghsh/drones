@@ -1,7 +1,7 @@
 /** World wiring for terrain, flights, viewpoints, and the comfort-aware FPV ride. */
 import * as THREE from "three";
 import { Experience, Environment } from "brahma-xr";
-import { setSite, MODEL_Y, settings } from "./domain.js";
+import { getSite, metresToScene, sceneToMetres, setSite, MODEL_Y, settings } from "./domain.js";
 import Sky from "./Sky.js";
 import Stars from "./Stars.js";
 import Terrain from "./Terrain.js";
@@ -11,6 +11,7 @@ import VideoPath from "./VideoPath.js";
 import VideoPanel from "./VideoPanel.js";
 import RideControls from "./RideControls.js";
 import VRMenu from "./VRMenu.js";
+import PingMarker from "./PingMarker.js";
 
 const PATH_COLORS = [0xffb347, 0x5ec8ff, 0xff6b9d, 0x9dff6b];
 const VIEW_PRESETS = [
@@ -46,6 +47,13 @@ export default class World {
     this._rideOffset = new THREE.Vector3();
     this._rideLookEuler = new THREE.Euler(0, 0, 0, "YXZ");
     this._rideLookAbort = null;
+    this.pingPlacementArmed = false;
+    this.pingNeedsTriggerRelease = false;
+    this.pingBlocksXRSelectionUntilRelease = false;
+    this.pingBlocksDesktopEvent = false;
+    this.pings = new Map();
+    this._pingStatus = "";
+    this._pingCursor = null;
     this.ready = this.load();
   }
 
@@ -439,8 +447,154 @@ export default class World {
     scan.highlightWindow(u0 + c.t0, u0 + c.t1);
   }
 
+  pingStatusLabel() {
+    if (this.pingPlacementArmed) return "AIM + SELECT";
+    return this.experience.networking?.connected ? "SHARED" : "LOCAL ONLY";
+  }
+
+  setPingPlacementArmed(armed) {
+    this.pingPlacementArmed = Boolean(armed);
+    this.pingNeedsTriggerRelease = this.pingPlacementArmed && this.experience.isXRActive();
+    if (this.pingPlacementArmed && this._pingCursor === null) {
+      this._pingCursor = this.experience.canvas.style.cursor;
+      this.experience.canvas.style.cursor = "crosshair";
+    } else if (!this.pingPlacementArmed && this._pingCursor !== null) {
+      this.experience.canvas.style.cursor = this._pingCursor;
+      this._pingCursor = null;
+    }
+    this.updatePingStatus(true);
+  }
+
+  togglePingPlacement() {
+    // lil-gui's click bubbles to brahma's window-level scene selector. Block
+    // only that event turn so pressing the control cannot also ping the map.
+    if (!this.experience.isXRActive()) {
+      this.pingBlocksDesktopEvent = true;
+      queueMicrotask(() => { this.pingBlocksDesktopEvent = false; });
+    }
+    this.setPingPlacementArmed(!this.pingPlacementArmed);
+  }
+
+  /** Consume one armed terrain/path selection and turn it into a shared ping. */
+  tryPlacePing(worldPoint) {
+    if (this.pingBlocksDesktopEvent || this.pingBlocksXRSelectionUntilRelease) return true;
+    if (!this.pingPlacementArmed) return false;
+    const xrActive = this.experience.isXRActive();
+    if (xrActive) {
+      const trigger = this.experience.controller?.rightController?.padControls?.primaryTrigger;
+      if (this.pingNeedsTriggerRelease || !trigger?.isPressed) return true;
+    }
+    if (!worldPoint) return true;
+
+    this.model.updateWorldMatrix(true, true);
+    const modelPoint = this.model.worldToLocal(worldPoint.clone());
+    const { e, n } = sceneToMetres(modelPoint);
+    const site = getSite();
+    const groundPoint = metresToScene(e, n, this.terrain.heightAt(e, n) - site.z_center);
+    const id = globalThis.crypto?.randomUUID?.()
+      ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    const payload = {
+      kind: "drones:ping",
+      schema: 1,
+      id,
+      modelPosition: groundPoint.toArray(),
+      color: this.experience.user.parameters.color,
+      ttlMs: 8000,
+    };
+    const sender = this.experience.user.parameters.userName || "User";
+    this.showPing(sender, payload, false);
+    this.queuePingBroadcast(this.model.localToWorld(groundPoint.clone()), payload);
+    this.setPingPlacementArmed(false);
+    // brahma repeats selection while the trigger is held. Consume those
+    // repeats so the ping click cannot also pin or start the selected path.
+    this.pingBlocksXRSelectionUntilRelease = xrActive;
+    return true;
+  }
+
+  queuePingBroadcast(worldPoint, payload) {
+    const networking = this.experience.networking;
+    if (!networking?.connected) return;
+    const attempt = () => {
+      if (!networking.connected) return;
+      const delay = networking.lastCalloutSend + networking.calloutThrottle - Date.now();
+      if (delay > 0) {
+        setTimeout(attempt, delay + 1);
+        return;
+      }
+      networking.sendCalloutUpdate(true, worldPoint, payload);
+    };
+    attempt();
+  }
+
+  receivePing(data) {
+    if (!data?.visible) return;
+    this.showPing(data.name, data.payload, true);
+  }
+
+  showPing(sender, payload, remote) {
+    const position = payload?.modelPosition;
+    const id = String(payload?.id ?? "").slice(0, 80);
+    if (!id || !Array.isArray(position) || position.length !== 3
+      || !position.every((value) => Number.isFinite(Number(value)) && Math.abs(Number(value)) <= 10000)) return;
+
+    const key = (String(sender || "User").trim() || "User").slice(0, 32);
+    const previous = this.pings.get(key);
+    if (previous?.pingId === id) return;
+    previous?.dispose();
+    this.pings.delete(key);
+    while (this.pings.size >= 24) {
+      const oldest = this.pings.keys().next().value;
+      this.pings.get(oldest)?.dispose();
+      this.pings.delete(oldest);
+    }
+
+    const marker = new PingMarker({
+      id,
+      sender: key,
+      color: payload.color,
+      ttlMs: THREE.MathUtils.clamp(Number(payload.ttlMs) || 8000, 2000, 10000),
+    });
+    marker.position.fromArray(position.map(Number));
+    this.model.add(marker);
+    this.pings.set(key, marker);
+    if (remote && this.experience.isXRActive()) {
+      this.experience.controller?.rightController?.padControls?.pulse(70, 0.3);
+    }
+  }
+
+  updatePingStatus(force = false) {
+    const status = this.pingStatusLabel();
+    if (!force && status === this._pingStatus) return;
+    this._pingStatus = status;
+    if (this.params) this.params.pingStatus = status;
+    this.pingStatusControl?.updateDisplay();
+    this.vrMenu?.refresh();
+  }
+
+  updatePings() {
+    const trigger = this.experience.controller?.rightController?.padControls?.primaryTrigger;
+    if (this.pingPlacementArmed && this.pingNeedsTriggerRelease) {
+      if (!trigger?.isPressed) this.pingNeedsTriggerRelease = false;
+    }
+    if (this.pingBlocksXRSelectionUntilRelease
+      && (!this.experience.isXRActive() || !trigger?.isPressed)) {
+      this.pingBlocksXRSelectionUntilRelease = false;
+    }
+    const now = performance.now();
+    for (const [key, marker] of this.pings) {
+      if (marker.update(now)) continue;
+      marker.dispose();
+      this.pings.delete(key);
+    }
+    this.updatePingStatus();
+  }
+
   onCalloutUpdate(data) {
     const pl = data?.payload;
+    if (pl?.kind === "drones:ping") {
+      this.receivePing(data);
+      return;
+    }
     if (pl?.viewMode) {
       this.setViewMode(pl.viewMode, pl.zoomFactor);
       return;
@@ -527,7 +681,7 @@ export default class World {
 
   setDebug() {
     const first = "All";
-    this.params = { flight: first, exaggeration: 1.0, imagery: 1.0, playAll: false, swath: true, rideSpeed: 1, rideComfort: true };
+    this.params = { flight: first, exaggeration: 1.0, imagery: 1.0, playAll: false, swath: true, rideSpeed: 1, rideComfort: true, pingStatus: this.pingStatusLabel() };
     if (!this.debug.active) return;
     const ui = this.debug.ui;
 
@@ -537,6 +691,10 @@ export default class World {
     z.add({ drone: () => this.setViewMode("fly", 1.0) }, "drone").name("🚁 Drone Overview (1.0x)");
     z.add({ zoomIn: () => this.setViewMode("fly", 0.45) }, "zoomIn").name("🔍 Zoom Close-Up (2.2x Closer)");
     z.add({ zoomFar: () => this.setViewMode("fly", 2.2) }, "zoomFar").name("🌐 High Altitude Overview");
+
+    const collaboration = ui.addFolder("Collaboration");
+    collaboration.add({ ping: () => this.togglePingPlacement() }, "ping").name("Ping area (next click)");
+    this.pingStatusControl = collaboration.add(this.params, "pingStatus").name("Ping status").disable();
 
     const f = ui.addFolder("Flights");
     const options = { All: "All" };
@@ -598,6 +756,7 @@ export default class World {
     this.panel?.update();
     this.videoPanel?.update();
     for (const p of this.paths) p.menu?.update();
+    this.updatePings();
     this.rideControls?.update();
     this.vrMenu?.update();
   }

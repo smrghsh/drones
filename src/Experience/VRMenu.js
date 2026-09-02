@@ -52,6 +52,7 @@ export default class VRMenu extends THREE.Group {
   mainDefinitions() {
     return [
       this.title("VR CONTROLS"),
+      this.button("ping", "Ping area", () => this.world.togglePingPlacement(), () => this.world.pingStatusLabel()),
       this.button("chooseFlight", "Choose exact flight…", () => this.showPage("flights"), () => this.world.activeFlightLabel()),
       this.button("chooseModel", "Choose scan model…", () => this.showPage("models"), () => this.world.activeScanModelLabel(), () => Boolean(this.world.activeScan())),
       this.button("ortho", "Ortho on terrain", () => this.world.toggleActiveScanOrtho(), () => this.world.activeScan()?.orthoOnTerrain ? "ON" : "OFF", () => Boolean(this.world.activeScan()?.flight.ortho)),

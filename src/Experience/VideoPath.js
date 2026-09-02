@@ -1,3 +1,4 @@
+/** Video-path rendering, playback interaction, and FPV time interpolation. */
 import * as THREE from "three";
 import { Line2 } from "three/addons/lines/Line2.js";
 import { LineGeometry } from "three/addons/lines/LineGeometry.js";
@@ -293,6 +294,7 @@ export default class VideoPath extends THREE.Group {
     }
   }
   onSelect(worldPoint) {
+    if (this.experience.world?.tryPlacePing?.(worldPoint)) return;
     this.experience.world?.setRideTarget?.(this);
     if (this.panel.pinned) {
       this.panel.setPinned(false);

@@ -193,7 +193,10 @@ export default class Terrain extends THREE.Group {
     c.fillStyle = "rgba(14,18,28,0.9)";
     c.beginPath(); c.roundRect(0, 0, W, H, 24); c.fill();
     c.strokeStyle = "#5ec8ff"; c.lineWidth = 4; c.beginPath(); c.roundRect(2, 2, W - 4, H - 4, 22); c.stroke();
-    c.fillStyle = "#7f8aa3"; c.font = "22px system-ui, sans-serif"; c.fillText("TERRAIN", 28, 44);
+    const title = this.experience.world?.pingPlacementArmed
+      ? "TERRAIN · CLICK/TRIGGER TO PING"
+      : "TERRAIN";
+    c.fillStyle = "#7f8aa3"; c.font = "22px system-ui, sans-serif"; c.fillText(title, 28, 44);
     c.fillStyle = "#f2f5fa"; c.font = "34px system-ui, sans-serif";
     c.fillText(`${lat.toFixed(6)}, ${lon.toFixed(6)}`, 28, 88);
     c.fillText(`${msl.toFixed(1)} m MSL`, 28, 132);
@@ -201,7 +204,9 @@ export default class Terrain extends THREE.Group {
     c.fillText(`E ${e.toFixed(0)} m  N ${n.toFixed(0)} m`, 330, 132);
     this.labelTex.needsUpdate = true;
   }
-  onSelect() {}
+  onSelect(worldPoint) {
+    this.experience.world?.tryPlacePing?.(worldPoint);
+  }
   hideSphere() {}
 
   async load() {
