@@ -28,5 +28,25 @@
     "id": "slaughterhouse",
     "name": "Historic slaughterhouse \u2014 building scan (OBJ)",
     "file": "./flights/slaughterhouse.json"
+  },
+  {
+    "id": "tomato",
+    "name": "Tomato flight \u2014 Skydio 3D Scan (2026-08-31)",
+    "file": "./flights/tomato.json"
+  },
+  {
+    "id": "tomato-v1",
+    "name": "Tomato flight \u2014 video (during scan)",
+    "file": "./flights/tomato-v1.json"
+  },
+  {
+    "id": "tomato2d",
+    "name": "Tomato plot 2D capture (2026-08-31)",
+    "file": "./flights/tomato2d.json"
+  },
+  {
+    "id": "tomato2d-v1",
+    "name": "Tomato plot 2D \u2014 video (during capture)",
+    "file": "./flights/tomato2d-v1.json"
   }
 ]
