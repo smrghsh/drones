@@ -43,6 +43,24 @@ Everything is baked once into `static/` by two scripts — see `tools/`:
   Santa Cruz County 2020 lidar DSM (3DEP, 1 m) from Microsoft Planetary
   Computer (anonymously signed STAC), reprojected into a local tangent plane
   centred on the farm → `static/farm/{imagery.jpg,height.png,site.json}`.
+  Any other 1.2 km square works the same way:
+  `uv run tools/prep_farm.py --site sankie --lat 36.45698 --lon -121.46667 --name "…"`
+  writes `static/sankie/…`; re-runs read the centre back from its `site.json`.
+- **Sites.** `static/sites.json` lists every site (`id`, `name`, `dir`, its
+  flights index). The app shows a site dropdown (top-left, and "Site" in the
+  debug panel / VR menu) when there is more than one, and `?site=<id>` deep-links
+  one. Switching rebuilds terrain + flights in place, so an XR session survives it.
+  Current sites: the UCSC Farm and **Salinas Valley (Chualar) — sankie air quality**.
+- `uv run tools/import_airlog.py data/sankie-log.csv --site sankie` — imports
+  the **sankie air-quality sensor pod** log (GPS + BME680 gas resistance / IAQ,
+  SCD4x CO₂, temperature, humidity, pressure) as an `airlog` flight. Readings the
+  pod reports as 0 while stale (CO₂, IAQ) are stored as null. The record gets a
+  `voxels` block (`--voxel-size 12 --voxel-channel gas_ohm`), so the app renders
+  the flight as **colour-coded voxels** along the path by default: samples are
+  binned into 12 m cubes, each cell averaging every channel inside it, drawn
+  through the same turbo map / legend as the path. The flight's debug folder has
+  **Colour by** (switches line + cubes together), **Voxels**, **Voxel size**
+  and **Voxel opacity**.
 - `uv run tools/prep_detail.py [--gsd 0.35]` — **high-resolution terrain patch**
   under the scans from the USGS 3DEP lidar *point cloud* (COPC via Planetary
   Computer, anonymously signed): highest return per cell → `static/farm/detail_height.png`
@@ -114,8 +132,9 @@ Real flight logs of other kinds should be converted to the same JSON shape
 
 ## Code map
 
-- `src/Experience/domain.js` — scene-scale contract (100 m/unit, lat/lon ⇄ scene)
+- `src/Experience/domain.js` — scene-scale contract (40 m/unit, lat/lon ⇄ scene), current site
 - `src/Experience/Terrain.js` — heightfield + imagery shader, `heightAt()`, hover probe
+- `src/Experience/VoxelField.js` — instanced cubes binning a flight's samples per channel (record `voxels`)
 - `src/Experience/FlightPath.js` — fat line + sample markers; brahma `isPath` hover/select
 - `src/Experience/SamplePanel.js` — canvas-textured info card (fields + image)
 - `src/Experience/VideoPath.js` — video flight: path cut into 10 s segments; hover a segment to
@@ -125,7 +144,7 @@ Real flight logs of other kinds should be converted to the same JSON shape
 - `src/Experience/VideoPanel.js` — SamplePanel with a `<video>` well, progress bar, contact strip
 - `src/Experience/ScanMenu.js` — in-scene menu beside each scan: coverage / photogrammetry / splat /
   terrain-only, plus "ortho on terrain" (off = no doubled flower beds under a floating mesh)
-- `src/Experience/World.js` — wiring + lil-gui (flight dropdown, terrain sliders)
+- `src/Experience/World.js` — wiring + lil-gui (site switcher, flight selector, terrain sliders)
 
 ## Debug panel
 

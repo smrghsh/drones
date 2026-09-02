@@ -2,6 +2,7 @@
 import * as THREE from "three";
 import { Experience, Environment } from "brahma-xr";
 import { setSite, MODEL_Y, settings } from "./domain.js";
+import { hideLegend } from "./colormap.js";
 import Sky from "./Sky.js";
 import Stars from "./Stars.js";
 import Terrain from "./Terrain.js";
@@ -12,6 +13,8 @@ import RideControls from "./RideControls.js";
 import VRMenu from "./VRMenu.js";
 
 const PATH_COLORS = [0xffb347, 0x5ec8ff, 0xff6b9d, 0x9dff6b];
+// Fallback when static/sites.json is missing: the original single-site layout.
+const DEFAULT_SITES = [{ id: "farm", name: "UC Santa Cruz Farm", dir: "./farm", flights: "./flights/index.json" }];
 const VIEW_PRESETS = [
   { label: "Human scale", mode: "human", zoom: 1 },
   { label: "Table diorama", mode: "table", zoom: 1 },
@@ -36,6 +39,11 @@ export default class World {
 
     this.currentScale = 1.0;
     this.viewPresetIndex = 2;
+    /** @type {{id:string, name:string, dir:string, flights:string}[]} static/sites.json */
+    this.sites = [];
+    /** the sites.json entry currently loaded */
+    this.site = null;
+    this.terrain = null;
     /** @type {Flight[]} */
     this.flights = [];
     this.ride = { state: "inactive", path: null, time: 0, speed: 1, comfort: true, saved: null };
@@ -51,36 +59,133 @@ export default class World {
 
 
   async load() {
-    const site = await fetch("./farm/site.json").then((r) => r.json());
-    setSite(site);
+    this.sites = await fetch("./sites.json")
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null) ?? DEFAULT_SITES;
 
-    this.terrain = new Terrain();
-    this.model.add(this.terrain);
-    await this.terrain.load();
-
+    // site-independent UI
     this.panel = new SamplePanel();
     this.model.add(this.panel);
     this.videoPanel = new VideoPanel();
     this.model.add(this.videoPanel);
     this.rideControls = new RideControls(this);
     this.scene.add(this.rideControls);
-
-    const index = await fetch("./flights/index.json").then((r) => r.json());
-    const ctx = { panel: this.panel, videoPanel: this.videoPanel };
-    this.flights = await Promise.all(
-      index.map((f, i) => Flight.load(f.file, { ...ctx, color: PATH_COLORS[i % PATH_COLORS.length] })),
-    );
-    for (const f of this.flights) this.model.add(f);
-    this.updateEmphasis();
-    this.refreshOrthos();
-
     this.vrMenu = new VRMenu(this);
     this.scene.add(this.vrMenu);
-
     this.setDebug();
+    this.setupSiteSelect();
+
+    // ?site=<id> picks the site; the first listed is the default
+    const wanted = new URLSearchParams(location.search).get("site");
+    await this.loadSite(this.sites.find((s) => s.id === wanted)?.id ?? this.sites[0].id);
+
     document.getElementById("loading").style.display = "none";
-    requestAnimationFrame(() => this.focus(null));
     return this;
+  }
+
+  // ---- sites ----------------------------------------------------------------
+  /**
+   * Swap the whole geo model for another site from static/sites.json: the
+   * terrain (imagery + heightfield under the site's dir) and its flight index.
+   * Everything geo — projections, terrain, flights, their gui folders, the FPV
+   * ride, hover panels, legend — is torn down and rebuilt in place, so the XR
+   * session (and the multi-user room) survives the switch.
+   */
+  async loadSite(id) {
+    const entry = this.sites.find((s) => s.id === id);
+    if (!entry || this.loadingSite) return;
+    this.loadingSite = true;
+    try {
+      this.unloadSite();
+      this.site = entry;
+      const site = await fetch(`${entry.dir}/site.json`).then((r) => r.json());
+      setSite({ ...site, id: entry.id, dir: entry.dir });
+
+      this.terrain = new Terrain();
+      this.model.add(this.terrain);
+      await this.terrain.load();
+      this.terrain.setExaggeration(this.params?.exaggeration ?? 1);
+      this.terrain.uniforms.uImageryMix.value = this.params?.imagery ?? 1;
+
+      const index = await fetch(entry.flights).then((r) => (r.ok ? r.json() : []));
+      const ctx = { panel: this.panel, videoPanel: this.videoPanel };
+      this.flights = await Promise.all(
+        index.map((f, i) =>
+          Flight.load(f.file, { ...ctx, color: PATH_COLORS[i % PATH_COLORS.length] }, f.voxels != null ? { voxels: f.voxels } : null),
+        ),
+      );
+      for (const f of this.flights) this.model.add(f);
+      this.updateEmphasis();
+      this.refreshOrthos();
+      this.buildFlightGui();
+      this.syncSiteUi();
+      this.vrMenu?.refresh();
+      requestAnimationFrame(() => this.focus(null));
+    } finally {
+      this.loadingSite = false;
+    }
+  }
+
+  /** Remove the current site's terrain and flights (see loadSite). */
+  unloadSite() {
+    this.stopRide();
+    this.ride.path = null;
+    this.rideControls?.setVisible(false);
+    for (const p of [this.panel, this.videoPanel]) { p?.setPinned(false); p?.hide(); }
+    for (const f of this.flights) { this.model.remove(f); f.dispose(); }
+    this.flights = [];
+    if (this.terrain) {
+      this.model.remove(this.terrain);
+      this.terrain.dispose();
+      this.terrain = null;
+    }
+    hideLegend();
+    this.flightFolder?.children.slice().forEach((c) => c.destroy());
+  }
+
+  siteLabel() {
+    return this.site?.name ?? "";
+  }
+
+  /** Next site in sites.json (VR menu). */
+  cycleSite() {
+    if (this.sites.length < 2) return;
+    const i = this.sites.findIndex((s) => s.id === this.site?.id);
+    this.loadSite(this.sites[(i + 1) % this.sites.length].id);
+  }
+
+  /** The HTML <select id="site"> (always shown when there is more than one site). */
+  setupSiteSelect() {
+    const select = document.getElementById("site");
+    if (!select) return;
+    select.replaceChildren(...this.sites.map((s) => Object.assign(document.createElement("option"), { value: s.id, textContent: s.name })));
+    select.hidden = this.sites.length < 2;
+    select.addEventListener("change", () => this.loadSite(select.value));
+  }
+
+  /** Reflect the loaded site in the URL, title, <select> and lil-gui. */
+  syncSiteUi() {
+    const id = this.site?.id;
+    const select = document.getElementById("site");
+    if (select) select.value = id;
+    if (this.params) { this.params.site = id; this.siteControl?.updateDisplay(); }
+    document.title = `${this.site?.name ?? "Drone flights"} — drone flights`;
+    const url = new URL(location.href);
+    if (id === this.sites[0]?.id) url.searchParams.delete("site");
+    else url.searchParams.set("site", id);
+    history.replaceState(null, "", url);
+  }
+
+  /** (Re)populate the lil-gui Flight Selector for the loaded site's flights. */
+  buildFlightGui() {
+    const f = this.flightFolder;
+    if (!f) return;
+    f.add({ unpin: () => { this.panel.setPinned(false); this.videoPanel.setPinned(false); } }, "unpin").name("Unpin panel");
+    for (const fl of this.flights) {
+      this.params["show_" + fl.record.id] = fl.visible;
+      f.add(this.params, "show_" + fl.record.id).name(fl.record.name).onChange((v) => this.setFlightVisible(fl, v));
+    }
+    for (const fl of this.flights) fl.addGui(f);
   }
 
   /** Set view modes: 'table', 'human', or 'fly' with camera zoom distance multiplier */
@@ -111,7 +216,7 @@ export default class World {
       this.model.position.set(0, 0, 0);
       this.model.updateMatrixWorld(true);
 
-      if (moveDesktopCamera && cam?.controls) {
+      if (moveDesktopCamera && cam?.controls && this.terrain) {
         const box = new THREE.Box3().setFromObject(this.terrain.mesh);
         const center = box.getCenter(new THREE.Vector3());
 
@@ -168,7 +273,7 @@ export default class World {
   }
 
   refreshOrthos() {
-    this.terrain.setOrthos(
+    this.terrain?.setOrthos(
       this.flights
         .filter((f) => f.visible && f.record.ortho)
         .map((f) => ({ spec: f.record.ortho, onTerrain: f.orthoOnTerrain }))
@@ -454,7 +559,7 @@ export default class World {
     const value = THREE.MathUtils.clamp(Number(v) || 1, 0.5, 6);
     settings.verticalExaggeration = value;
     this.model.scale.y = this.currentScale * value;
-    this.terrain.setExaggeration(value);
+    this.terrain?.setExaggeration(value);
     for (const p of [this.panel, this.videoPanel]) {
       p.scale.set(p.baseScale, p.baseScale / value, p.baseScale);
     }
@@ -472,7 +577,7 @@ export default class World {
 
   setImageryMix(value) {
     const mix = THREE.MathUtils.clamp(Number(value), 0, 1);
-    this.terrain.uniforms.uImageryMix.value = mix;
+    if (this.terrain?.uniforms) this.terrain.uniforms.uImageryMix.value = mix;
     if (this.params) this.params.imagery = mix;
     this.imageryControl?.updateDisplay();
     this.vrMenu?.refresh();
@@ -503,7 +608,7 @@ export default class World {
 
   focus(path, zoomFactor = 1.0) {
     const cam = this.experience.camera;
-    if (!cam?.controls) return;
+    if (!cam?.controls || (!path && !this.terrain)) return;
 
     this.model.updateMatrixWorld(true);
     const box = path ? path.bounds() : new THREE.Box3().setFromObject(this.terrain.mesh);
@@ -520,9 +625,14 @@ export default class World {
 
   setDebug() {
     // params exist even without #debug — the VR menu reads and writes them
-    this.params = { exaggeration: 1.0, imagery: 1.0, swath: true, rideSpeed: 1, rideComfort: true };
+    this.params = { exaggeration: 1.0, imagery: 1.0, swath: true, rideSpeed: 1, rideComfort: true, site: this.sites[0]?.id };
     if (!this.debug.active) return;
     const ui = this.debug.ui;
+
+    if (this.sites.length > 1) {
+      this.siteControl = ui.add(this.params, "site", Object.fromEntries(this.sites.map((s) => [s.name, s.id])))
+        .name("Site").onChange((id) => this.loadSite(id));
+    }
 
     const z = ui.addFolder("Scale & Perspectives");
     z.add({ human: () => this.setViewMode("human") }, "human").name("🚶 Human Scale (Walking)");
@@ -532,14 +642,9 @@ export default class World {
     z.add({ zoomFar: () => this.setViewMode("fly", 2.2) }, "zoomFar").name("🌐 High Altitude Overview");
 
     // Flight Selector: one checkbox per flight; each visible flight shows its
-    // own options folder (built by the Flight itself) right below.
-    const f = ui.addFolder("Flight Selector");
-    f.add({ unpin: () => { this.panel.setPinned(false); this.videoPanel.setPinned(false); } }, "unpin").name("Unpin panel");
-    for (const fl of this.flights) {
-      this.params["show_" + fl.record.id] = fl.visible;
-      f.add(this.params, "show_" + fl.record.id).name(fl.record.name).onChange((v) => this.setFlightVisible(fl, v));
-    }
-    for (const fl of this.flights) fl.addGui(f);
+    // own options folder (built by the Flight itself) right below. Filled by
+    // buildFlightGui() whenever a site loads.
+    this.flightFolder = ui.addFolder("Flight Selector");
 
     const fpv = ui.addFolder("FPV ride");
     this.rideSpeedControl = fpv.add(this.params, "rideSpeed", 0.25, 4, 0.25).name("Speed ×")

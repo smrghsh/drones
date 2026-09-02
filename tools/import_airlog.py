@@ -16,8 +16,10 @@ reports as 0 when it has no fresh value (SCD_CO2, IAQ) are stored as null so the
 voxel/colour code can ignore them instead of averaging in zeros.
 
 Writes static/<site>/flights/<id>.json — the same waypoint/sample shape as the
-Skydio importers plus `kind: "airlog"` and a `metrics` table describing the
-sensor channels — and registers it in static/<site>/flights/index.json.
+Skydio importers plus `kind: "airlog"`, a `metrics` table describing the
+sensor channels and a `voxels` block (cell size + default channel) so the app
+renders the log as colour-coded voxels along the path by default — and
+registers it in static/<site>/flights/index.json.
 """
 import argparse, csv, json
 from datetime import datetime, timezone
@@ -47,6 +49,9 @@ def main():
     ap.add_argument("--site", required=True, help="site id (static/<site>/)")
     ap.add_argument("--id", default=None)
     ap.add_argument("--name", default=None)
+    ap.add_argument("--voxel-size", type=float, default=12.0, help="voxel cell edge in metres (0 = no voxels)")
+    ap.add_argument("--voxel-channel", default="gas_ohm", choices=list(METRICS),
+                    help="sensor channel the voxels (and the path) are coloured by at load")
     args = ap.parse_args()
     fid = args.id or args.csv.stem.replace("-log", "")
     rows = [r for r in csv.DictReader(args.csv.open()) if num(r.get("Lat")) and num(r.get("Lon"))]
@@ -80,6 +85,8 @@ def main():
         panel_fields=["t", "lat", "lon", "alt_msl", "gas_ohm", "co2", "iaq", "temp_c", "hum_pct", "press_hpa", "siv"],
         metrics=metrics, waypoints=waypoints, samples=samples,
     )
+    if args.voxel_size > 0:
+        flight["voxels"] = dict(size_m=args.voxel_size, channel=args.voxel_channel, opacity=0.6)
     out = REPO / "static" / args.site / "flights"
     out.mkdir(parents=True, exist_ok=True)
     (out / f"{fid}.json").write_text(json.dumps(flight, separators=(",", ":")))

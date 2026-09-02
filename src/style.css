@@ -45,6 +45,26 @@ body {
   background: rgba(255, 255, 255, 0.2);
 }
 
+/* site switcher (static/sites.json) — shown only when there is more than one site */
+#site {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  z-index: 5;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 0.25rem;
+  background: rgba(14, 18, 28, 0.85);
+  color: white;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+#site[hidden] {
+  display: none;
+}
+
 /* colour-map legend for "Colour by" flight channels (src/Experience/colormap.js) */
 #legend {
   display: none;
