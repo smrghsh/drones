@@ -3,7 +3,11 @@ import { Experience } from "brahma-xr";
 
 const W = 360, H = 64;
 
-/** Viewer-following, pointer-selectable controls for riding a video path. */
+/**
+ * Viewer-following, pointer-selectable controls for riding a video path.
+ * Shown only inside an XR session: on desktop the head-locked panel just
+ * gets in the way (the debug panel drives the ride there).
+ */
 export default class RideControls extends THREE.Group {
   constructor(world) {
     super();
@@ -11,10 +15,14 @@ export default class RideControls extends THREE.Group {
     this.world = world;
     this.items = [];
     this.visible = false;
+    this.wanted = false; // a ride target is set; the panel shows once we're presenting
     this._camPos = new THREE.Vector3();
     this._camQuat = new THREE.Quaternion();
     this._forward = new THREE.Vector3();
     this.build();
+    const xr = this.experience.renderer.instance.xr;
+    xr.addEventListener("sessionstart", () => this.setVisible(this.wanted));
+    xr.addEventListener("sessionend", () => this.setVisible(this.wanted));
   }
 
   build() {
@@ -74,12 +82,14 @@ export default class RideControls extends THREE.Group {
   refresh() { for (const item of this.items) this.draw(item); }
 
   setVisible(visible) {
-    this.visible = visible;
+    this.wanted = visible;
+    const show = visible && this.experience.renderer.instance.xr.isPresenting;
+    this.visible = show;
     const selectable = this.experience.selectableObjects;
     for (const item of this.items) {
       const i = selectable.indexOf(item.mesh);
-      if (visible && i < 0) selectable.push(item.mesh);
-      if (!visible && i >= 0) selectable.splice(i, 1);
+      if (show && i < 0) selectable.push(item.mesh);
+      if (!show && i >= 0) selectable.splice(i, 1);
     }
   }
 
