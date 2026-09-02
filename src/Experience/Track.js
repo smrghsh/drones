@@ -5,8 +5,9 @@ import { project } from "./domain.js";
  * Columnar store for a flight trajectory. Positions live in typed arrays
  * (Float64 lat/lon — Float32 only resolves ~1 m at these latitudes — and a
  * packed Float32 scene-space cache); every numeric field found in the source
- * records becomes a Float32 channel (heading, gimbal_pitch, co2, …) with NaN
- * for missing values. The original records are kept as-is for UI panels.
+ * records becomes a typed-array channel (heading, gimbal_pitch, co2, … —
+ * Float32, except utc which keeps Float64 precision) with NaN for missing
+ * values. The original records are kept as-is for UI panels.
  *
  * This is the "dump data in" point of the flight API: any array of objects
  * with lat/lon/alt-ish keys becomes a Track.
@@ -56,7 +57,8 @@ export default class Track {
       al[i] = r[alt] ?? 0;
       for (const k in r) {
         if (skip.has(k) || typeof r[k] !== "number") continue;
-        (channels[k] ??= new Float32Array(n).fill(NaN))[i] = r[k];
+        // utc timestamps (~1.7e9 s) need Float64 — Float32 only resolves ~2 min there
+        (channels[k] ??= new (k === "utc" ? Float64Array : Float32Array)(n).fill(NaN))[i] = r[k];
       }
     });
     return new Track({ lat: la, lon: lo, alt: al, channels, records });
