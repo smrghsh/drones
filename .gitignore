@@ -13,3 +13,4 @@ static/flights/*/recon.glb
 static/flights/*/splat.sog
 docs/flights/*/recon.glb
 docs/flights/*/splat.sog
+__pycache__/

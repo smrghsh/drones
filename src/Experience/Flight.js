@@ -53,22 +53,26 @@ export default class Flight extends THREE.Group {
     const isScan = record.kind === "scan";
     this.uiScale = record.kind === "video" ? 0.25 : isScan ? 0.2 : 1;
     this.track = Track.from(record.track ?? record.samples ?? record.waypoints ?? []);
-    this.path =
-      record.kind === "video"
-        ? new VideoPath({ flight: record, track: this.track, panel: videoPanel ?? panel, color: this.color })
-        : new FlightPath({
-            flight: record,
-            track: this.track,
-            panel,
-            color: this.color,
-            uiScale: this.uiScale,
-            coneRadius: isScan ? 0.003 : 0.012,
-          });
-    this.add(this.path);
+    /** @type {FlightPath|null} null for model-only records (a building scan with no trajectory) */
+    this.path = null;
+    if (this.track.length > 0) {
+      this.path =
+        record.kind === "video"
+          ? new VideoPath({ flight: record, track: this.track, panel: videoPanel ?? panel, color: this.color })
+          : new FlightPath({
+              flight: record,
+              track: this.track,
+              panel,
+              color: this.color,
+              uiScale: this.uiScale,
+              coneRadius: isScan ? 0.003 : 0.012,
+            });
+      this.add(this.path);
+    }
 
     /** @type {FlightModel|null} */
     this.model = null;
-    if (record.mesh) {
+    if (record.mesh || record.recon || record.splat) {
       this.model = new FlightModel(this);
       this.add(this.model);
     }
@@ -91,14 +95,14 @@ export default class Flight extends THREE.Group {
   /** Show/hide the whole flight (path, model, in-scene menu, gui folder). */
   setVisible(v) {
     this.visible = v;
-    this.path.setActive(v, this.path.emphasis);
+    this.path?.setActive(v, this.path.emphasis);
     this.model?.setVisible(v);
     if (this.folder) (v ? this.folder.show() : this.folder.hide());
   }
 
   /** Emphasis < 1 draws the path subdued and not hoverable (see FlightPath). */
   setEmphasis(e) {
-    this.path.setActive(this.visible, e);
+    this.path?.setActive(this.visible, e);
   }
 
   /** Drape this flight's orthomosaic on the terrain (when the record has one). */
@@ -109,9 +113,9 @@ export default class Flight extends THREE.Group {
     this.refreshGui();
   }
 
-  /** World-space bounding box, for camera focusing. */
+  /** World-space bounding box (trajectory, or the model for path-less scans), for camera focusing. */
   bounds() {
-    return this.path.bounds();
+    return this.path ? this.path.bounds() : this.model?.bounds() ?? new THREE.Box3().setFromObject(this);
   }
 
   /**
@@ -121,8 +125,8 @@ export default class Flight extends THREE.Group {
   addGui(parent) {
     const record = this.record, path = this.path;
     const s = (this.guiState = {
-      focus: () => this.experience.world?.focus(path),
-      lineWidth: path.linewidth,
+      focus: () => this.experience.world?.focus(this),
+      lineWidth: path?.linewidth ?? 3,
       samples: true,
       colorBy: "none",
       representation: this.model?.representation ?? "none",
@@ -133,20 +137,22 @@ export default class Flight extends THREE.Group {
     const f = (this.folder = parent.addFolder(record.name));
     f.close();
     f.add(s, "focus").name("Focus camera");
-    f.add(s, "lineWidth", 1, 8, 0.5).name("Line width").onChange((w) => path.setLineWidth(w));
-    if (path.samples) f.add(s, "samples").name("Sample markers").onChange((v) => path.setConesVisible(v));
-    if (record.kind !== "video") {
+    if (path) f.add(s, "lineWidth", 1, 8, 0.5).name("Line width").onChange((w) => path.setLineWidth(w));
+    if (path?.samples) f.add(s, "samples").name("Sample markers").onChange((v) => path.setConesVisible(v));
+    if (path && record.kind !== "video") {
       // the video line's colours are owned by segment highlighting
       const channels = { "Path colour": "none", Altitude: "alt" };
       for (const [k, m] of Object.entries(record.metrics ?? {})) channels[m.label || k] = k;
       f.add(s, "colorBy", channels).name("Colour by").onChange((k) => path.colorBy(k));
     }
     if (this.model) {
-      const opts = { "Coverage mesh (Skydio)": "coverage" };
+      const opts = {};
+      if (record.mesh) opts["Coverage mesh (Skydio)"] = "coverage";
       if (record.recon) opts["Photogrammetry mesh"] = "recon";
       if (record.splat) opts["Gaussian splat"] = "splat";
       opts["Terrain only"] = "none";
       f.add(s, "representation", opts).name("3D model").onChange((k) => this.model.setRepresentation(k));
+      this.addPlacementGui(f);
     }
     if (record.ortho) f.add(s, "orthoTerrain").name("Ortho on terrain").onChange((v) => this.setOrthoOnTerrain(v));
     if (record.kind === "video") {
@@ -157,6 +163,38 @@ export default class Flight extends THREE.Group {
       });
     }
     if (!this.visible) f.hide();
+    return f;
+  }
+
+  /**
+   * "Placement" sub-folder: nudge a georeferenced asset (recon / splat) in
+   * ENU metres + yaw, live, and print the resulting spec so it can be pasted
+   * back into the flight JSON. Handy for fitting externally produced scans
+   * (a building OBJ in UTM) against the lidar terrain and orthos.
+   */
+  addPlacementGui(parent) {
+    const keys = ["recon", "splat"].filter((k) => this.record[k]);
+    if (!keys.length) return;
+    const spec = this.record[keys[0]];
+    const o = spec.offset_m ?? [0, 0, 0];
+    const p = (this.placementState = { east: o[0], north: o[1], up: o[2], yaw: spec.yaw_deg ?? 0, scale: spec.scale ?? 1 });
+    const f = parent.addFolder("Placement (" + keys.join(" + ") + ")");
+    f.close();
+    const apply = () => {
+      for (const k of keys) this.model.setPlacement(k, { offset_m: [p.east, p.north, p.up], yaw_deg: p.yaw, scale: p.scale });
+    };
+    f.add(p, "east", -50, 50, 0.05).name("East (m)").onChange(apply);
+    f.add(p, "north", -50, 50, 0.05).name("North (m)").onChange(apply);
+    f.add(p, "up", -30, 30, 0.05).name("Up (m)").onChange(apply);
+    f.add(p, "yaw", -180, 180, 0.1).name("Yaw ccw (\u00b0)").onChange(apply);
+    f.add(p, "scale", 0.5, 2, 0.001).name("Scale").onChange(apply);
+    f.add({ print: () => {
+      const out = {};
+      for (const k of keys) out[k] = { origin: this.record[k].origin, offset_m: [p.east, p.north, p.up], yaw_deg: p.yaw, ...(p.scale !== 1 ? { scale: p.scale } : {}) };
+      const text = JSON.stringify(out, null, 2);
+      console.log(`placement for ${this.record.id} (paste into static/flights/${this.record.id}.json):\n${text}`);
+      navigator.clipboard?.writeText(text).catch(() => {});
+    } }, "print").name("Copy placement JSON");
     return f;
   }
 

@@ -23,5 +23,10 @@
     "id": "test2",
     "name": "Bean field \u2014 Skydio 3D Scan (crop rows)",
     "file": "./flights/test2.json"
+  },
+  {
+    "id": "slaughterhouse",
+    "name": "Historic slaughterhouse \u2014 building scan (OBJ)",
+    "file": "./flights/slaughterhouse.json"
   }
 ]

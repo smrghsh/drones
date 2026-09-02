@@ -31,9 +31,12 @@ export default class FlightModel extends THREE.Group {
     this.name = this.record.id + "-model";
 
     this.reps = {};
-    this.representation = "coverage";
     this.loading = null;
+    // Skydio exports come with a coverage mesh (shown first, loaded eagerly);
+    // an imported scan (tools/import_obj.py) has only recon/splat, so start there.
+    this.representation = this.record.mesh ? "coverage" : this.record.recon ? "recon" : this.record.splat ? "splat" : "none";
     if (this.record.mesh) this.loadCoverage(this.record.mesh);
+    else if (this.representation !== "none") this.setRepresentation(this.representation);
 
     const xr = this.experience.renderer.instance.xr;
     xr.addEventListener("sessionstart", () => this.setSplatQuality("fast"));
@@ -98,12 +101,45 @@ export default class FlightModel extends THREE.Group {
     anchor.position.copy(project(spec.origin.lat, spec.origin.lon, spec.origin.alt_msl ?? 0));
     anchor.scale.setScalar(1 / METERS_PER_UNIT);
     const inner = new THREE.Group();
-    const o = spec.offset_m ?? [0, 0, 0];
-    inner.position.set(o[0], o[2], -o[1]); // (e, n, up) -> scene (x, y, -z)
-    inner.rotation.y = THREE.MathUtils.degToRad(spec.yaw_deg ?? 0);
     anchor.add(inner);
     anchor.inner = inner;
+    this.applyPlacement(anchor, spec);
     return anchor;
+  }
+
+  /** offset_m (e, n, up) + yaw_deg (+ optional uniform scale) of a spec -> the anchor's inner group. */
+  applyPlacement(anchor, spec) {
+    const o = spec.offset_m ?? [0, 0, 0];
+    anchor.inner.position.set(o[0], o[2], -o[1]); // (e, n, up) -> scene (x, y, -z)
+    anchor.inner.rotation.y = THREE.MathUtils.degToRad(spec.yaw_deg ?? 0);
+    anchor.inner.scale.setScalar(spec.scale ?? 1);
+  }
+
+  /**
+   * Move a representation live (Placement gui): updates the record's spec so
+   * a later "Copy placement JSON" reflects it, and re-seats the loaded anchor.
+   */
+  setPlacement(key, { offset_m, yaw_deg, scale }) {
+    const spec = this.record[key];
+    if (!spec) return;
+    if (offset_m) spec.offset_m = offset_m;
+    if (yaw_deg !== undefined) spec.yaw_deg = yaw_deg;
+    if (scale !== undefined) spec.scale = scale;
+    const anchor = this.reps[key];
+    if (!anchor) return;
+    this.applyPlacement(anchor, spec);
+    if (this.representation === key) this.measure(anchor);
+  }
+
+  /** World-space bounds of the shown representation (for the in-scene menu and camera focus). */
+  measure(anchor) {
+    this.updateMatrixWorld(true);
+    this.meshBounds = new THREE.Box3().setFromObject(anchor);
+    this.placeMenu();
+  }
+
+  bounds() {
+    return this.meshBounds ?? new THREE.Box3().setFromObject(this);
   }
 
   /** Switch the 3D representation: "coverage" | "recon" | "splat" | "none". Loads lazily. */
@@ -138,7 +174,7 @@ export default class FlightModel extends THREE.Group {
     } catch (e) {
       console.error(`failed to load ${key} for ${this.record.id}`, e);
       this.loading = null;
-      this.representation = "coverage";
+      this.representation = this.reps.coverage ? "coverage" : "none";
       if (this.reps.coverage) this.reps.coverage.visible = true;
       this.onChanged();
       return;
@@ -147,6 +183,11 @@ export default class FlightModel extends THREE.Group {
     this.add(anchor);
     this.loading = null;
     anchor.visible = this.representation === key; // user may have switched meanwhile
+    if (!this.record.mesh && !this.meshBounds) {
+      // model-only scan: this is the first geometry we have, so size the menu/focus from it
+      this.measure(anchor);
+      this.dispatchEvent({ type: "meshloaded" });
+    }
     this.menu?.refresh();
   }
 

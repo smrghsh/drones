@@ -1,0 +1,97 @@
+{
+  "id": "slaughterhouse",
+  "name": "Historic slaughterhouse \u2014 building scan (OBJ)",
+  "kind": "scan",
+  "date": null,
+  "provenance": {
+    "source": "External photogrammetry export (OBJ + SLPK)",
+    "file": "Mesh.obj",
+    "crs": "EPSG:32610",
+    "processing": "tools/import_obj.py: OBJ -> unlit meshopt GLB, WebP textures"
+  },
+  "samples": [],
+  "recon": {
+    "file": "./flights/slaughterhouse/recon.glb",
+    "origin": {
+      "lat": 36.9849622101436,
+      "lon": -122.05596728519896,
+      "alt_msl": 0.0
+    },
+    "offset_m": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "yaw_deg": 0.0,
+    "frame": "enu_msl",
+    "extent_m": {
+      "e": [
+        -12.542399954749271,
+        12.542399954632856
+      ],
+      "n": [
+        -13.028556734323502,
+        13.028556734323502
+      ],
+      "z": [
+        138.10338793796103,
+        151.58007155459921
+      ]
+    },
+    "vertices": 604241,
+    "faces": 770061,
+    "textures": [
+      {
+        "file": "Mesh-0.jpg",
+        "px": [
+          8192,
+          8192
+        ]
+      },
+      {
+        "file": "Mesh-1.jpg",
+        "px": [
+          8192,
+          8192
+        ]
+      },
+      {
+        "file": "Mesh-2.jpg",
+        "px": [
+          4096,
+          4096
+        ]
+      },
+      {
+        "file": "Mesh-3.jpg",
+        "px": [
+          2048,
+          2048
+        ]
+      },
+      {
+        "file": "Mesh-4.jpg",
+        "px": [
+          2048,
+          1024
+        ]
+      },
+      {
+        "file": "Mesh-5.jpg",
+        "px": [
+          1024,
+          512
+        ]
+      },
+      {
+        "file": "Mesh-6.jpg",
+        "px": [
+          256,
+          256
+        ]
+      }
+    ],
+    "bytes": 35536548,
+    "parts": 2
+  }
+}

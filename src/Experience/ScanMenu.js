@@ -27,7 +27,8 @@ export default class ScanMenu extends THREE.Group {
 
   build() {
     const f = this.model.record;
-    const reps = [["coverage", "Coverage mesh (Skydio)"]];
+    const reps = [];
+    if (f.mesh) reps.push(["coverage", "Coverage mesh (Skydio)"]);
     if (f.recon) reps.push(["recon", "Photogrammetry mesh"]);
     if (f.splat) reps.push(["splat", "Gaussian splat"]);
     reps.push(["none", "Terrain only"]);
