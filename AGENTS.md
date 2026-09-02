@@ -21,6 +21,20 @@ config; the networking is a simple star-topology relay (`brahma-xr-server`).
   `.selectable = true` and implement `onHover/onUnhover/onSelect` — the
   shared `experience.pointer` raycasts mouse (desktop) and controllers (XR).
 
+## Flights
+
+All flight data is standardised as `Flight` instances (`src/Experience/Flight.js`):
+a metadata record + a `FlightPath` (trajectory + its own interactivity; `VideoPath`
+subclass for videos) + an optional `FlightModel` (coverage mesh / photogrammetry /
+splat). Trajectories are stored columnar in `Track` (typed arrays; every numeric
+field in the source records becomes a channel that can be painted along the line
+via `path.colorBy(key)`). To add a flight from any source, write a record with
+`id`/`name`/`kind` and a `track`/`samples`/`waypoints` array of
+`{ lat, lon, alt_msl, ... }` (see the JSDoc in Flight.js), register it in
+`static/flights/index.json`, and `World` does the rest — including the lil-gui
+"Flight Selector" (a visibility checkbox per flight; each flight owns its options
+folder and shows/hides it with its visibility).
+
 ## Verify loop (this is your test)
 
 1. `npm run dev` (app) and `npx brahma-xr-server` (relay) in two terminals.

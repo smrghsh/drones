@@ -11,21 +11,22 @@ const W = 512, ROW = 56, PAD = 14;
  * Billboards (yaw only) toward the viewer.
  */
 export default class ScanMenu extends THREE.Group {
-  constructor(path) {
+  /** @param {import("./FlightModel.js").default} model the scan model this menu drives */
+  constructor(model) {
     super();
     this.experience = new Experience();
-    this.path = path;
+    this.model = model;
     this.items = []; // { key, label, kind: "radio"|"toggle", mesh, canvas, ctx, texture }
     this.rows = new THREE.Group();
     this.add(this.rows);
-    this.scale.setScalar(path.uiScale * 0.9);
+    this.scale.setScalar(model.uiScale * 0.9);
     this.hoverKey = null;
     this._camPos = new THREE.Vector3();
     this.build();
   }
 
   build() {
-    const f = this.path.flight;
+    const f = this.model.record;
     const reps = [["coverage", "Coverage mesh (Skydio)"]];
     if (f.recon) reps.push(["recon", "Photogrammetry mesh"]);
     if (f.splat) reps.push(["splat", "Gaussian splat"]);
@@ -62,11 +63,11 @@ export default class ScanMenu extends THREE.Group {
   }
 
   activate(item) {
-    if (item.kind === "radio") this.path.setRepresentation(item.key);
-    else if (item.key === "orthoTerrain") this.path.setOrthoOnTerrain(!this.path.orthoOnTerrain);
+    if (item.kind === "radio") this.model.setRepresentation(item.key);
+    else if (item.key === "orthoTerrain") this.model.setOrthoOnTerrain(!this.model.orthoOnTerrain);
     this.refresh();
     this.experience.networking?.sendCalloutUpdate(true, this.getWorldPosition(new THREE.Vector3()),
-      { menu: this.path.flight.id, representation: this.path.representation, orthoTerrain: this.path.orthoOnTerrain });
+      { menu: this.model.record.id, representation: this.model.representation, orthoTerrain: this.model.orthoOnTerrain });
   }
 
   refresh() { for (const it of this.items) this.draw(it); }
@@ -76,18 +77,18 @@ export default class ScanMenu extends THREE.Group {
     c.clearRect(0, 0, W, ROW);
     if (it.kind === "title") {
       c.fillStyle = "rgba(14,18,28,0.92)"; roundRect(c, 0, 0, W, ROW, 14); c.fill();
-      c.fillStyle = "#" + this.path.color.getHexString(); c.font = "bold 26px system-ui, sans-serif";
+      c.fillStyle = "#" + this.model.color.getHexString(); c.font = "bold 26px system-ui, sans-serif";
       c.fillText(it.label, PAD + 4, 37);
       c.fillStyle = "#7f8aa3"; c.font = "18px system-ui, sans-serif"; c.textAlign = "right";
       c.fillText("3D model", W - PAD - 4, 36); c.textAlign = "left";
     } else {
-      const on = it.kind === "radio" ? this.path.representation === it.key : this.path.orthoOnTerrain;
+      const on = it.kind === "radio" ? this.model.representation === it.key : this.model.orthoOnTerrain;
       const hot = this.hoverKey === it.key;
-      const loading = it.kind === "radio" && this.path.loading === it.key;
+      const loading = it.kind === "radio" && this.model.loading === it.key;
       c.fillStyle = hot ? "rgba(46,60,90,0.95)" : "rgba(14,18,28,0.9)"; roundRect(c, 0, 0, W, ROW, 14); c.fill();
-      if (on) { c.strokeStyle = "#" + this.path.color.getHexString(); c.lineWidth = 4; roundRect(c, 2, 2, W - 4, ROW - 4, 12); c.stroke(); }
+      if (on) { c.strokeStyle = "#" + this.model.color.getHexString(); c.lineWidth = 4; roundRect(c, 2, 2, W - 4, ROW - 4, 12); c.stroke(); }
       // indicator
-      c.strokeStyle = on ? "#" + this.path.color.getHexString() : "#7f8aa3"; c.lineWidth = 3;
+      c.strokeStyle = on ? "#" + this.model.color.getHexString() : "#7f8aa3"; c.lineWidth = 3;
       if (it.kind === "radio") { c.beginPath(); c.arc(PAD + 14, ROW / 2, 10, 0, Math.PI * 2); c.stroke(); if (on) { c.fillStyle = c.strokeStyle; c.beginPath(); c.arc(PAD + 14, ROW / 2, 5, 0, Math.PI * 2); c.fill(); } }
       else { roundRect(c, PAD + 2, ROW / 2 - 11, 24, 22, 5); c.stroke(); if (on) { c.fillStyle = c.strokeStyle; roundRect(c, PAD + 7, ROW / 2 - 6, 14, 12, 3); c.fill(); } }
       c.fillStyle = on ? "#f2f5fa" : "#c9d1e0"; c.font = `${on ? "bold " : ""}24px system-ui, sans-serif`;

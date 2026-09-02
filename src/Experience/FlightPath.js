@@ -2,80 +2,66 @@ import * as THREE from "three";
 import { Line2 } from "three/addons/lines/Line2.js";
 import { LineGeometry } from "three/addons/lines/LineGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { Experience } from "brahma-xr";
-import { project, METERS_PER_UNIT, settings } from "./domain.js";
-import ScanMenu from "./ScanMenu.js";
-import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
-import { fetchChunked } from "./chunked.js";
+import { turbo, metricRange, showLegend, hideLegend } from "./colormap.js";
 
 /**
- * One drone mission: a fat line through the waypoints plus sample markers.
- * Implements brahma's "isPath" contract so Pointer hands us hover points
- * (setSphere) and precise pointOnLine selections (onSelect) on desktop + VR.
+ * The trajectory of one Flight: a screen-space fat line through the track,
+ * plus an instanced cone per sample showing where the camera looked.
+ *
+ * Owns its own interactivity — implements brahma's "isPath" contract so the
+ * shared Pointer hands it hover points (setSphere) and precise pointOnLine
+ * selections (onSelect) on desktop and in VR; hovering shows the nearest
+ * sample in the SamplePanel. The LineMaterial is screen-space (fat lines), so
+ * the path reads at any world scale (table diorama to 1:1); the only shader
+ * bookkeeping it needs is the drawing-buffer resolution, wired here.
+ *
+ * The line is vertex-coloured, so any Track channel can be painted along it
+ * (`colorBy("co2")`) with the shared turbo colour map and HTML legend.
  */
 export default class FlightPath extends THREE.Group {
-  constructor(flight, panel, color) {
+  /**
+   * @param {object} opts
+   * @param {object} opts.flight the flight record (metadata JSON)
+   * @param {import("./Track.js").default} opts.track trajectory + channels
+   * @param {object} opts.panel SamplePanel (or VideoPanel for subclasses)
+   * @param {THREE.ColorRepresentation} opts.color path colour
+   * @param {number} [opts.uiScale=1] marker/panel scale for small missions
+   * @param {number} [opts.linewidth=3] base line width (px)
+   * @param {number} [opts.coneRadius=0.012] sample cone size (0 = no cones)
+   */
+  constructor({ flight, track, panel, color, uiScale = 1, linewidth = 3, coneRadius = 0.012 }) {
     super();
     this.experience = new Experience();
     this.flight = flight;
+    this.track = track;
     this.panel = panel;
     this.isPath = true;
-    this.name = flight.id;
+    this.name = flight.id + "-path";
     this.color = new THREE.Color(color);
+    this.uiScale = uiScale;
+    this.linewidth = linewidth;
     this.hover = false;
+    this.emphasis = 1;
+    this.colorKey = null;
 
-    const positions = [];
-    for (const w of flight.waypoints) {
-      const p = project(w.lat, w.lon, w.alt_msl);
-      positions.push(p.x, p.y, p.z);
-    }
-    const geometry = new LineGeometry();
-    geometry.setPositions(positions);
-    this.material = new LineMaterial({
-      color: this.color,
-      linewidth: 3,
-      transparent: true,
-      opacity: 0.95,
-    });
-    this.line = new Line2(geometry, this.material);
+    // fat line through the track, vertex-coloured so channels can paint it
+    this.positions = track.positions();
+    this._colors = new Float32Array(this.positions.length);
+    this.geometry = new LineGeometry();
+    this.geometry.setPositions(this.positions);
+    this.material = new LineMaterial({ vertexColors: true, linewidth, transparent: true, opacity: 0.95 });
+    this.line = new Line2(this.geometry, this.material);
     this.line.computeLineDistances();
     this.line.renderOrder = 2;
     this.add(this.line);
+    this.paint(() => this.color);
 
-    // sample points: small cones pointing where the camera looked
-    this.samplePositions = flight.samples.map((s) => project(s.lat, s.lon, s.alt_msl));
-    const isScan = flight.kind === "scan";
-    const r = isScan ? 0.003 : 0.012;
-    const cone = new THREE.ConeGeometry(r, r * 2.5, 8);
-    cone.translate(0, -r * 1.25, 0); // tip at the camera position, body along -Y (view direction)
-    cone.rotateX(Math.PI); // ConeGeometry points +Y; we want the base to trail behind
-    const inst = new THREE.InstancedMesh(cone, new THREE.MeshBasicMaterial({ color: this.color }), flight.samples.length);
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), dir = new THREE.Vector3();
-    flight.samples.forEach((s, i) => {
-      const h = THREE.MathUtils.degToRad(s.heading ?? 0), pch = THREE.MathUtils.degToRad(s.gimbal_pitch ?? -90);
-      dir.set(Math.sin(h) * Math.cos(pch), Math.sin(pch), -Math.cos(h) * Math.cos(pch)); // heading cw from N, pitch <0 = down
-      q.setFromUnitVectors(up, dir.negate()); // cone geometry's +Y (after flip) must face -dir
-      m.compose(this.samplePositions[i], q, new THREE.Vector3(1, 1, 1));
-      inst.setMatrixAt(i, m);
-    });
-    inst.renderOrder = 2;
-    this.samples = inst;
-    this.add(inst);
-    this.highlightWindow(null);
+    if (coneRadius > 0) this.buildCones(coneRadius);
 
-    // 3D representations of a scan: Skydio coverage mesh (shipped with the
-    // export), our own photogrammetry mesh and Gaussian splat (tools/reconstruct.py)
-    this.reps = {};
-    this.representation = "coverage";
-    this.orthoOnTerrain = true;
-    this.loading = null;
-    if (flight.mesh) this.loadMesh(flight.mesh);
-
-    // hover marker + panel scale, sized to the mission's footprint
-    this.uiScale = isScan ? 0.2 : 1;
+    // hover marker, sized to the mission's footprint
     this.marker = new THREE.Mesh(
-      new THREE.SphereGeometry(0.02 * this.uiScale, 16, 12),
+      new THREE.SphereGeometry(0.02 * uiScale, 16, 12),
       new THREE.MeshBasicMaterial({ color: 0xffffff }),
     );
     this.marker.visible = false;
@@ -83,190 +69,164 @@ export default class FlightPath extends THREE.Group {
 
     this.setResolution();
     this.experience.on("resize", () => this.setResolution());
-    this.experience.renderer.instance.xr.addEventListener("sessionstart", () => { this.setResolution(); this.setSplatQuality("fast"); });
-    this.experience.renderer.instance.xr.addEventListener("sessionend", () => { this.setResolution(); this.setSplatQuality(this.preferredSplatQuality ?? "fast"); });
+    const xr = this.experience.renderer.instance.xr;
+    xr.addEventListener("sessionstart", () => this.setResolution());
+    xr.addEventListener("sessionend", () => this.setResolution());
     this.experience.selectableObjects.push(this);
   }
 
-  /** Photogrammetry / scan mesh in the flight's local gravity-aligned frame. */
-  loadMesh(spec) {
-    new GLTFLoader().load(spec.file, (gltf) => {
-      const mesh = gltf.scene;
-      mesh.traverse((o) => {
-        if (o.isMesh) {
-          // Skydio coverage meshes carry near-black coverage flags as vertex
-          // colours, so shade by normals with a neutral tint instead.
-          // Drawn over the terrain: the scan is the finer ground truth and the
-          // lidar DSM (with crops on it) would otherwise bury most of it.
-          // Skydio coverage meshes carry no RGB, so drape the aerial imagery.
-          o.material = this.experience.world.terrain.drapeMaterial();
-          o.renderOrder = 1;
-          o.raycast = () => {};
-        }
-      });
-      // Skydio's glTF root node already converts its z-up local frame to
-      // glTF y-up, i.e. local (x, y, z) -> (x, z, -y) == our scene frame
-      // (x=E, y=up, z=-N) before yaw. A ccw yaw about local z (metres, ENU)
-      // is the same rotation about scene +y.
-      const yawed = new THREE.Group();
-      yawed.rotation.y = THREE.MathUtils.degToRad(spec.yaw_deg);
-      yawed.add(mesh);
-      const anchor = new THREE.Group();
-      anchor.position.copy(project(spec.origin.lat, spec.origin.lon, spec.origin.alt_msl));
-      anchor.scale.setScalar(1 / METERS_PER_UNIT); // vertical exaggeration is applied on World.model
-      anchor.add(yawed);
-      this.mesh = anchor;
-      this.reps.coverage = anchor;
-      anchor.visible = this.representation === "coverage";
-      this.add(anchor);
-      this.updateMatrixWorld(true);
-      this.meshBounds = new THREE.Box3().setFromObject(mesh); // world space
-      this.placeMenu();
-      this.dispatchEvent({ type: "meshloaded" });
-    });
-  }
-
-  /** In-scene menu beside the scan (needs the coverage mesh bounds to know where "beside" is). */
-  placeMenu() {
-    if (this.flight.kind !== "scan") return;
-    if (!this.menu) { this.menu = new ScanMenu(this); this.add(this.menu); this.menu.setVisible(this.visible); }
-    const box = this.meshBounds ?? this.bounds();
-    const local = this.worldToLocal(new THREE.Vector3(box.max.x, box.max.y, box.min.z)); // NE corner, top
-    this.menu.position.copy(local).add(new THREE.Vector3(0.12 * this.uiScale, 0.35 * this.uiScale, 0));
-  }
-
-  /** Anchor group for a georeferenced asset: ENU metres about origin (lat, lon, alt 0 = MSL). */
-  anchorFor(spec) {
-    const anchor = new THREE.Group();
-    anchor.position.copy(project(spec.origin.lat, spec.origin.lon, spec.origin.alt_msl ?? 0));
-    anchor.scale.setScalar(1 / METERS_PER_UNIT);
-    const inner = new THREE.Group();
-    const o = spec.offset_m ?? [0, 0, 0];
-    inner.position.set(o[0], o[2], -o[1]); // (e, n, up) -> scene (x, y, -z)
-    inner.rotation.y = THREE.MathUtils.degToRad(spec.yaw_deg ?? 0);
-    anchor.add(inner);
-    anchor.inner = inner;
-    return anchor;
-  }
-
-  /** Switch the scan's 3D model: "coverage" | "recon" | "splat" | "none". Loads lazily. */
-  async setRepresentation(key) {
-    this.representation = key;
-    for (const [k, g] of Object.entries(this.reps)) g.visible = k === key;
-    this.menu?.refresh();
-    this.experience.world?.onModelChanged?.(this);
-    if (key === "none" || this.reps[key]) return;
-    const spec = this.flight[key];
-    if (!spec) return;
-    this.loading = key; this.menu?.refresh();
-    const anchor = this.anchorFor(spec);
-    try {
-      if (key === "recon") {
-        // meshopt-compressed glb (tools/reconstruct.py -> gltf-transform), possibly split into <5 MB parts
-        const buf = await fetchChunked(spec.file);
-        const loader = new GLTFLoader();
-        loader.setMeshoptDecoder(MeshoptDecoder);
-        const gltf = await loader.parseAsync(buf, spec.file.replace(/[^/]*$/, ""));
-        const m = gltf.scene;
-        if (spec.frame?.startsWith("enu")) m.rotation.x = -Math.PI / 2; // z-up ENU -> y-up
-        m.traverse((o) => { if (o.isMesh) { o.raycast = () => {}; o.material.side = THREE.DoubleSide; o.renderOrder = 1; } });
-        anchor.inner.add(m);
-      } else if (key === "splat") {
-        const quality = this.flight.splat_fast ? "fast" : this.flight.splat_vr ? "vr" : "desktop";
-        const qualitySpec = quality === "fast" ? this.flight.splat_fast : quality === "vr" ? this.flight.splat_vr : spec;
-        const splat = await this.makeSplat(qualitySpec);
-        this.splatMesh = splat; this.splatQuality = quality; this.splatAnchor = anchor;
-        anchor.inner.add(splat);
-      }
-    } catch (e) {
-      console.error(`failed to load ${key} for ${this.flight.id}`, e);
-      this.loading = null; this.representation = "coverage"; this.reps.coverage && (this.reps.coverage.visible = true); this.menu?.refresh();
-      return;
+  /** Small cones at every sample, tip at the camera, body along the view direction. */
+  buildCones(r) {
+    const n = this.track.length;
+    const heading = this.track.channel("heading"), pitch = this.track.channel("gimbal_pitch");
+    const cone = new THREE.ConeGeometry(r, r * 2.5, 8);
+    cone.translate(0, -r * 1.25, 0); // tip at the camera position, body along -Y (view direction)
+    cone.rotateX(Math.PI); // ConeGeometry points +Y; we want the base to trail behind
+    const inst = new THREE.InstancedMesh(cone, new THREE.MeshBasicMaterial({ color: 0xffffff }), n);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
+    const up = new THREE.Vector3(0, 1, 0), dir = new THREE.Vector3(), p = new THREE.Vector3();
+    for (let i = 0; i < n; i++) {
+      const h = THREE.MathUtils.degToRad(nanFallback(heading?.[i], 0));
+      const pch = THREE.MathUtils.degToRad(nanFallback(pitch?.[i], -90));
+      dir.set(Math.sin(h) * Math.cos(pch), Math.sin(pch), -Math.cos(h) * Math.cos(pch)); // heading cw from N, pitch <0 = down
+      q.setFromUnitVectors(up, dir.negate()); // cone geometry's +Y (after flip) must face -dir
+      m.compose(this.track.position(i, p), q, one);
+      inst.setMatrixAt(i, m);
+      inst.setColorAt(i, this.color);
     }
-    this.reps[key] = anchor;
-    this.add(anchor);
-    this.loading = null;
-    anchor.visible = this.representation === key; // user may have switched meanwhile
-    this.menu?.refresh();
+    inst.renderOrder = 2;
+    this.samples = inst;
+    this.add(inst);
   }
 
-  async makeSplat(spec) {
-    const { SplatMesh, SplatFileType } = await import("./spark.module.js");
-    const bytes = new Uint8Array(await fetchChunked(spec.file));
-    const type = spec.file.endsWith(".sog") ? SplatFileType.PCSOGSZIP : spec.file.endsWith(".spz") ? SplatFileType.SPZ : SplatFileType.PLY;
-    const splat = new SplatMesh({ fileBytes: bytes, fileType: type, blurAmount: 0.12, maxStdDev: 2.45, minAlpha: 1 / 255 });
-    if (spec.frame?.startsWith("enu")) splat.rotation.x = -Math.PI / 2;
-    splat.raycast = () => {};
-    return splat;
-  }
-
-  /** Full detail on desktop; a 500K-splat model for stereo headset rendering. */
-  async setSplatQuality(quality) {
-    if (!this.flight.splat_vr || !this.splatMesh || this.splatQuality === quality) return;
-    this.pendingSplatQuality = quality;
-    const spec = quality === "fast" ? (this.flight.splat_fast ?? this.flight.splat_vr) : quality === "vr" ? this.flight.splat_vr : this.flight.splat;
-    try {
-      const next = await this.makeSplat(spec);
-      if (this.pendingSplatQuality !== quality) { next.dispose?.(); return; }
-      const old = this.splatMesh;
-      this.splatAnchor.inner.remove(old);
-      this.splatAnchor.inner.add(next);
-      this.splatMesh = next; this.splatQuality = quality;
-      old.dispose?.();
-    } catch (error) {
-      console.error(`failed to switch splat quality to ${quality}`, error);
+  // ---- painting -----------------------------------------------------------
+  /** Recolour the line: `fn(i, out)` returns the colour for point i. */
+  paint(fn) {
+    const n = this.track.length, colors = this._colors, c = new THREE.Color();
+    for (let i = 0; i < n; i++) {
+      const col = fn(i, c) ?? c;
+      colors[i * 3] = col.r; colors[i * 3 + 1] = col.g; colors[i * 3 + 2] = col.b;
     }
+    this.geometry.setColors(colors);
   }
-
-  setOrthoOnTerrain(v) {
-    this.orthoOnTerrain = v;
-    this.experience.world?.refreshOrthos();
-    this.menu?.refresh();
-    this.experience.world?.onModelChanged?.(this);
-  }
-
 
   /**
-   * Brighten the sample markers captured between utc0 and utc1 (a video
+   * Paint the line by a Track channel through the turbo colour map (robust
+   * 2..98 percentile range, HTML legend). `"alt"` colours by altitude;
+   * null/"none" restores the flat path colour.
+   */
+  colorBy(key) {
+    this.colorKey = !key || key === "none" ? null : key;
+    if (!this.colorKey) {
+      this.paint(() => this.color);
+      hideLegend();
+      return;
+    }
+    const vals = this.track.channel(key);
+    if (!vals) return;
+    const { lo, hi } = metricRange(vals);
+    const missing = new THREE.Color(0x3a4150);
+    this.paint((i, out) => (Number.isFinite(vals[i]) ? turbo((vals[i] - lo) / (hi - lo), out) : missing));
+    if (this.visible) {
+      const meta = key === "alt" ? { label: "Altitude", unit: "m MSL" } : this.flight.metrics?.[key] ?? { label: key, unit: "" };
+      showLegend({ key, label: meta.label, unit: meta.unit, lo, hi });
+    }
+  }
+
+  /** Base line width in pixels (hover adds 2). */
+  setLineWidth(w) {
+    this.linewidth = w;
+    this.material.linewidth = this.hover ? w + 2 : w;
+  }
+
+  /** Show/hide the per-sample cones. */
+  setConesVisible(v) {
+    if (this.samples) this.samples.visible = v;
+  }
+
+  /**
+   * Brighten the sample cones captured between utc0 and utc1 (a video
    * segment); everything else keeps the path colour. null clears.
    */
   highlightWindow(utc0, utc1) {
-    const inst = this.samples, n = this.flight.samples.length;
-    const hot = new THREE.Color(0xffffff), base = this.color, dimmed = this.color.clone().multiplyScalar(0.45);
+    if (!this.samples) return 0;
+    const utc = this.track.channel("utc");
+    const hot = new THREE.Color(0xffffff), dimmed = this.color.clone().multiplyScalar(0.45);
     const active = utc0 != null;
     let count = 0;
-    for (let i = 0; i < n; i++) {
-      const u = this.flight.samples[i].utc;
-      const on = active && u != null && u >= utc0 && u <= utc1;
+    for (let i = 0; i < this.track.length; i++) {
+      const u = utc?.[i];
+      const on = active && Number.isFinite(u) && u >= utc0 && u <= utc1;
       if (on) count++;
-      inst.setColorAt(i, on ? hot : active ? dimmed : base);
+      this.samples.setColorAt(i, on ? hot : active ? dimmed : this.color);
     }
-    inst.instanceColor.needsUpdate = true;
+    this.samples.instanceColor.needsUpdate = true;
     return count;
+  }
+
+  // ---- polyline helpers (shared with VideoPath) ---------------------------
+  /** Scene point at fractional index t (linear between points). */
+  pointAt(t, target = new THREE.Vector3()) {
+    const P = this.positions, n = this.track.length;
+    const i = Math.min(Math.max(Math.floor(t), 0), n - 2);
+    const f = THREE.MathUtils.clamp(t - i, 0, 1);
+    const a = i * 3;
+    return target.set(
+      P[a] + (P[a + 3] - P[a]) * f,
+      P[a + 1] + (P[a + 4] - P[a + 1]) * f,
+      P[a + 2] + (P[a + 5] - P[a + 2]) * f,
+    );
+  }
+
+  /** Fractional index of the closest point on the polyline to a local point. */
+  timeAt(localPoint) {
+    let bt = 0, bd = Infinity;
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), ab = new THREE.Vector3(), ap = new THREE.Vector3(), q = new THREE.Vector3();
+    for (let i = 0; i < this.track.length - 1; i++) {
+      this.track.position(i, a); this.track.position(i + 1, b);
+      ab.subVectors(b, a); ap.subVectors(localPoint, a);
+      const L = ab.lengthSq();
+      const f = L > 1e-12 ? THREE.MathUtils.clamp(ap.dot(ab) / L, 0, 1) : 0;
+      const d = q.copy(a).addScaledVector(ab, f).distanceToSquared(localPoint);
+      if (d < bd) { bd = d; bt = i + f; }
+    }
+    return bt;
+  }
+
+  /** Nearest sample to a local-frame point. */
+  nearestSample(localPoint) {
+    const P = this.positions;
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < this.track.length; i++) {
+      const a = i * 3;
+      const dx = P[a] - localPoint.x, dy = P[a + 1] - localPoint.y, dz = P[a + 2] - localPoint.z;
+      const d = dx * dx + dy * dy + dz * dz;
+      if (d < bd) { bd = d; best = i; }
+    }
+    return { sample: this.track.record(best), position: this.track.position(best), index: best };
   }
 
   /** World-space bounding box of the path, for camera focusing. */
   bounds() {
-    const box = new THREE.Box3().setFromPoints(this.samplePositions);
+    const box = new THREE.Box3().setFromArray(this.positions);
     return box.applyMatrix4(this.matrixWorld);
   }
 
   setResolution() {
-    const r = this.experience.renderer.instance;
     const s = new THREE.Vector2();
-    r.getDrawingBufferSize(s);
+    this.experience.renderer.instance.getDrawingBufferSize(s);
     this.material.resolution.copy(s);
   }
 
   // ---- brahma Pointer contract -------------------------------------------
   onHover() {
     this.hover = true;
-    this.material.linewidth = 5;
+    this.material.linewidth = this.linewidth + 2;
     this.marker.visible = true;
   }
   onUnhover() {
     this.hover = false;
-    this.material.linewidth = 3;
+    this.material.linewidth = this.linewidth;
     this.marker.visible = false;
     this.panel.hide();
   }
@@ -286,32 +246,30 @@ export default class FlightPath extends THREE.Group {
   }
   hideSphere() {}
 
-  nearestSample(localPoint) {
-    let best = 0, bd = Infinity;
-    this.samplePositions.forEach((p, i) => {
-      const d = p.distanceToSquared(localPoint);
-      if (d < bd) { bd = d; best = i; }
-    });
-    return { sample: this.flight.samples[best], position: this.samplePositions[best], index: best };
-  }
-
   /**
    * Show/hide; `emphasis` < 1 draws the path subdued and takes it out of the
-   * pointer's selectable set (a video recorded during this scan shares its
+   * pointer's selectable set (a video recorded during a scan shares its
    * trajectory, so only one of them can own the hover at a time).
    */
   setActive(active, emphasis = 1) {
     this.visible = active;
+    this.emphasis = emphasis;
     const selectable = active && emphasis >= 1;
     const list = this.experience.selectableObjects;
     const i = list.indexOf(this);
     if (selectable && i < 0) list.push(this);
     if (!selectable && i >= 0) list.splice(i, 1);
     if (!selectable && this.hover) this.onUnhover();
-    this.menu?.setVisible(active);
     this.material.opacity = 0.95 * (emphasis < 1 ? 0.35 : 1);
-    this.samples.material.transparent = true;
-    this.samples.material.opacity = emphasis < 1 ? 0.35 : 1;
-    this.samples.material.needsUpdate = true;
+    if (this.samples) {
+      this.samples.material.transparent = true;
+      this.samples.material.opacity = emphasis < 1 ? 0.35 : 1;
+      this.samples.material.needsUpdate = true;
+    }
+    if (this.colorKey) active ? this.colorBy(this.colorKey) : hideLegend(); // keep the legend in sync
   }
+}
+
+function nanFallback(v, d) {
+  return Number.isFinite(v) ? v : d;
 }
