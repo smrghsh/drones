@@ -8,11 +8,13 @@ controller) at a path to open a sample panel — metadata fields plus the image
 captured at the nearest sample — and at the ground to read lat/lon + elevation.
 Built on [brahma-xr](https://github.com/smrghsh/brahma) via `create-brahma-xr`.
 
-Select a video path to make it the target of the viewer-following **Ride Flight
+Select any flight path to make it the target of the viewer-following **FPV Ride
 Path** controls. Start carries the desktop camera or complete VR rig along the
 geolocated trajectory; Pause freezes it in place, Resume continues, and Stop
 returns the viewer to the exact pre-ride pose. VR head movement and pointing
-remain live during a ride, while grab locomotion is temporarily disabled.
+remain live during a ride, while grab locomotion is temporarily disabled. The
+default **Comfort horizon** follows heading while keeping the horizon level to
+reduce pitch-induced cybersickness; turn it off for the full drone trajectory.
 
 **Live:** https://smrghsh.github.io/drones/ (append `#debug` for the control panel)
 
@@ -124,6 +126,41 @@ footprint overlay. **Ride speed** and the ride transport controls mirror the
 in-scene Start / Pause / Stop controls. Hovering a video segment also lights up the scan photos
 captured in that window, and the hovered segment is shared with other users
 in the session (brahma callout relay).
+
+## FPV ride (Issue #11)
+
+Choose a mission from **Flights → Sample path**, or select a path directly in
+the scene. Then use **FPV ride → Start / resume** in the debug panel or the
+viewer-following Start / Pause / Stop controls. Every imported scan, photo
+mission, and video trajectory can be ridden. **Speed ×** ranges from 0.25× to
+4×; 1× follows the recorded timing. Stop restores the exact camera/VR-rig pose
+from before the ride.
+
+While riding on desktop, drag anywhere on the 3D view with the mouse or one
+finger to look freely through 360° without leaving the path. In VR, the
+camera group carries the complete rig while headset tracking remains active,
+so turning your head controls the view independently of travel direction.
+
+In a headset, start with **Comfort horizon** enabled and a low speed. Stop if
+you feel discomfort; the full-pitch mode can create stronger vection and is
+more likely to cause cybersickness.
+
+### VR controller menu
+
+Entering VR displays a compact vertical control list above the **left
+controller**. Aim the ray from the **right controller** and press the **right
+index trigger** to select a row. A held trigger activates a row only once; it
+must be released before another selection. The right side/grip button is never
+used by this menu and remains reserved for brahma-xr locomotion.
+
+The list mirrors the main desktop controls needed in-headset: flight and view
+selection, scan model and ortho selection, FPV transport/speed/comfort,
+ground-swath visibility, vertical exaggeration, and imagery mix.
+Choose **Choose exact flight…** to open a page with one button for every route,
+then select the route by name before starting FPV. If no route has been chosen,
+Start selects the first available flight automatically. **Choose scan model…**
+opens direct buttons for every representation the active scan provides,
+including Gaussian splats when available.
 
 ## Topography controls
 

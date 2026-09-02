@@ -160,8 +160,9 @@ export default class Flight extends THREE.Group {
     return f;
   }
 
-  /** Sync the gui folder after an option changed elsewhere (menu, remote user). */
+  /** Sync the gui folder (and VR menu) after an option changed elsewhere (menu, remote user). */
   refreshGui() {
+    this.experience.world?.vrMenu?.refresh();
     if (!this.folder) return;
     this.guiState.representation = this.model?.representation ?? "none";
     this.guiState.orthoTerrain = this.orthoOnTerrain;

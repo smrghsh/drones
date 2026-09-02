@@ -12,9 +12,10 @@ import { turbo, metricRange, showLegend, hideLegend } from "./colormap.js";
  * Owns its own interactivity — implements brahma's "isPath" contract so the
  * shared Pointer hands it hover points (setSphere) and precise pointOnLine
  * selections (onSelect) on desktop and in VR; hovering shows the nearest
- * sample in the SamplePanel. The LineMaterial is screen-space (fat lines), so
- * the path reads at any world scale (table diorama to 1:1); the only shader
- * bookkeeping it needs is the drawing-buffer resolution, wired here.
+ * sample in the SamplePanel, selecting also offers the path to the FPV ride.
+ * The LineMaterial is screen-space (fat lines), so the path reads at any
+ * world scale (table diorama to 1:1); the only shader bookkeeping it needs is
+ * the drawing-buffer resolution, wired here.
  *
  * The line is vertex-coloured, so any Track channel can be painted along it
  * (`colorBy("co2")`) with the shared turbo colour map and HTML legend.
@@ -164,7 +165,7 @@ export default class FlightPath extends THREE.Group {
     return count;
   }
 
-  // ---- polyline helpers (shared with VideoPath) ---------------------------
+  // ---- polyline helpers (shared with VideoPath and the FPV ride) ----------
   /** Scene point at fractional index t (linear between points). */
   pointAt(t, target = new THREE.Vector3()) {
     const P = this.positions, n = this.track.length;
@@ -176,6 +177,36 @@ export default class FlightPath extends THREE.Group {
       P[a + 1] + (P[a + 4] - P[a + 1]) * f,
       P[a + 2] + (P[a + 5] - P[a + 2]) * f,
     );
+  }
+
+  /** Seconds available to ride, derived from capture timestamps when present. */
+  rideDuration() {
+    const n = this.track.length;
+    if (n < 2) return 0;
+    const utc = this.track.channel("utc");
+    const elapsed = utc ? utc[n - 1] - utc[0] : NaN;
+    return Number.isFinite(elapsed) && elapsed > 0 ? elapsed : n - 1;
+  }
+
+  /** Scene point at `seconds` into the mission (utc-aware; drives the FPV ride). */
+  ridePointAt(seconds, target = new THREE.Vector3()) {
+    const n = this.track.length;
+    if (!n) return target.set(0, 0, 0);
+    if (n === 1) return this.track.position(0, target);
+    const duration = this.rideDuration();
+    const elapsed = THREE.MathUtils.clamp(Number(seconds) || 0, 0, duration);
+    const utc = this.track.channel("utc");
+    const timestamped = utc && Number.isFinite(utc[0]) && Number.isFinite(utc[n - 1]) && utc[n - 1] > utc[0];
+    if (!timestamped) return this.pointAt(duration > 0 ? (elapsed / duration) * (n - 1) : 0, target);
+    const t = utc[0] + elapsed;
+    let low = 1, high = n - 1;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (utc[middle] < t) low = middle + 1;
+      else high = middle;
+    }
+    const a = utc[low - 1], b = utc[low];
+    return this.pointAt(low - 1 + (b > a ? (t - a) / (b - a) : 0), target);
   }
 
   /** Fractional index of the closest point on the polyline to a local point. */
@@ -236,6 +267,7 @@ export default class FlightPath extends THREE.Group {
     if (!this.panel.pinned) this.panel.show(s.sample, this.flight, this.localToWorld(s.position.clone()), this.uiScale);
   }
   onSelect(worldPoint) {
+    this.experience.world?.setRideTarget?.(this);
     if (this.panel.pinned) {
       this.panel.setPinned(false);
       if (worldPoint) this.setSphere(worldPoint);
