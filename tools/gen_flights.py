@@ -9,8 +9,9 @@ static/flights/index.json, static/flights/<id>.json and per-sample placeholder
 images (NAIP crops under the drone) in static/flights/<id>/NNN.jpg.
 
 Real flight logs should be converted to the same JSON shape:
-  { id, name, drone, camera, date, waypoints:[{lat,lon,alt_msl,t}],
+  { id, name, drone, camera, date,
     samples:[{id,t,lat,lon,alt_msl,alt_agl,heading,gimbal_pitch,image,notes}] }
+  (the samples are the trajectory; the app also accepts `track` or `waypoints` arrays)
 Run:  uv run tools/gen_flights.py
 """
 import json, math, shutil
@@ -106,10 +107,10 @@ def main():
                                     notes=m["notes"]))
                 sid += 1; next_sample += m["sample_every"]
         flight = dict(id=m["id"], name=m["name"], drone=m["drone"], camera=m["camera"], date=m["date"],
-                      agl_m=m["agl"], waypoints=wps, samples=samples)
+                      agl_m=m["agl"], samples=samples)
         (OUT / f"{m['id']}.json").write_text(json.dumps(flight))
         index.append(dict(id=m["id"], name=m["name"], file=f"./flights/{m['id']}.json"))
-        print(m["id"], len(wps), "waypoints", len(samples), "samples")
+        print(m["id"], len(wps), "points", len(samples), "samples")
     (OUT / "index.json").write_text(json.dumps(index, indent=2))
 
 if __name__ == "__main__":

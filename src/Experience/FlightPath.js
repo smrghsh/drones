@@ -69,10 +69,13 @@ export default class FlightPath extends THREE.Group {
     this.add(this.marker);
 
     this.setResolution();
-    this.experience.on("resize", () => this.setResolution());
+    // namespaced so dispose() can drop exactly this path's listener (site switch)
+    this._resizeEvent = `resize.path-${this.uuid}`;
+    this._onResolution = () => this.setResolution();
+    this.experience.on(this._resizeEvent, this._onResolution);
     const xr = this.experience.renderer.instance.xr;
-    xr.addEventListener("sessionstart", () => this.setResolution());
-    xr.addEventListener("sessionend", () => this.setResolution());
+    xr.addEventListener("sessionstart", this._onResolution);
+    xr.addEventListener("sessionend", this._onResolution);
     this.experience.selectableObjects.push(this);
   }
 
@@ -96,6 +99,9 @@ export default class FlightPath extends THREE.Group {
       inst.setColorAt(i, this.color);
     }
     inst.renderOrder = 2;
+    // The fat line owns the hover; without this the pointer would test every
+    // cone of every visible scan on each frame.
+    inst.raycast = () => {};
     this.samples = inst;
     this.add(inst);
   }
@@ -303,6 +309,10 @@ export default class FlightPath extends THREE.Group {
 
   /** Release GPU buffers once the path has left the scene (site switch). */
   dispose() {
+    this.experience.off(this._resizeEvent);
+    const xr = this.experience.renderer.instance.xr;
+    xr.removeEventListener("sessionstart", this._onResolution);
+    xr.removeEventListener("sessionend", this._onResolution);
     this.geometry.dispose();
     this.material.dispose();
     this.samples?.geometry.dispose();

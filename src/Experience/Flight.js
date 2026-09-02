@@ -106,11 +106,19 @@ export default class Flight extends THREE.Group {
    * options such as `voxels` without editing the importer output.
    */
   static async load(url, ctx, extra = null) {
+    return Flight.from(await Flight.fetchRecord(url, extra), ctx);
+  }
+
+  /**
+   * Fetch just the record (no site or terrain needed yet), so World can
+   * download flights while the terrain is still loading.
+   */
+  static async fetchRecord(url, extra = null) {
     const record = await fetch(url).then((r) => {
       if (!r.ok) throw new Error(`${url}: ${r.status}`);
       return r.json();
     });
-    return Flight.from(extra ? { ...record, ...extra } : record, ctx);
+    return extra ? { ...record, ...extra } : record;
   }
 
   /** Show/hide the whole flight (path, model, voxels, in-scene menu, gui folder). */

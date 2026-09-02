@@ -58,7 +58,7 @@ def main():
     if not rows: raise SystemExit("no rows with a GPS fix")
     t0 = datetime.fromisoformat(rows[0]["GPS_Timestamp"]).replace(tzinfo=timezone.utc)
     t1 = datetime.fromisoformat(rows[-1]["GPS_Timestamp"]).replace(tzinfo=timezone.utc)
-    samples, waypoints = [], []
+    samples = []
     for i, r in enumerate(rows):
         ts = datetime.fromisoformat(r["GPS_Timestamp"]).replace(tzinfo=timezone.utc)
         t = round((ts - t0).total_seconds(), 1)
@@ -72,7 +72,6 @@ def main():
         s["scd_temp_c"] = num(r.get("SCD_Temp_C")) or None
         s["batt_v"] = num(r.get("CH1_V"))
         samples.append(s)
-        waypoints.append(dict(lat=s["lat"], lon=s["lon"], alt_msl=s["alt_msl"], t=t))
     metrics = {k: dict(label=l, unit=u) for k, (l, u, _) in METRICS.items()}
     for k in metrics:
         vals = [s[k] for s in samples if s[k] is not None]
@@ -83,7 +82,7 @@ def main():
         kind="airlog", start_utc=t0.timestamp(), end_utc=t1.timestamp(),
         duration_s=round((t1 - t0).total_seconds(), 1),
         panel_fields=["t", "lat", "lon", "alt_msl", "gas_ohm", "co2", "iaq", "temp_c", "hum_pct", "press_hpa", "siv"],
-        metrics=metrics, waypoints=waypoints, samples=samples,
+        metrics=metrics, samples=samples,
     )
     if args.voxel_size > 0:
         flight["voxels"] = dict(size_m=args.voxel_size, channel=args.voxel_channel, opacity=0.6)

@@ -133,7 +133,12 @@ export default class VideoPanel extends SamplePanel {
   update() {
     super.update();
     if (!this.visible || !this.playing || !this.path) return;
-    this.path.onPlayback(this.k, this.playing.currentTime);
+    this.path.onPlayback(this.k, this.playing.currentTime); // drone marker: every frame, cheap
+    // The card is a 1024x512 canvas re-uploaded as a texture on every draw;
+    // 20 Hz keeps the clip smooth without paying that on each XR frame.
+    const now = performance.now();
+    if (now - (this._lastDraw ?? 0) < 50) return;
+    this._lastDraw = now;
     this.draw();
   }
 }

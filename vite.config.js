@@ -25,6 +25,6 @@ export default defineConfig({
   build: {
     outDir: "../docs",
     emptyOutDir: true,
-    sourcemap: true,
+    sourcemap: false, // 4 MB of maps in docs/ nobody fetches; flip on locally when debugging a build
   },
 });

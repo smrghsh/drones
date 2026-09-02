@@ -39,8 +39,24 @@ export default class FlightModel extends THREE.Group {
     else if (this.representation !== "none") this.setRepresentation(this.representation);
 
     const xr = this.experience.renderer.instance.xr;
-    xr.addEventListener("sessionstart", () => this.setSplatQuality("fast"));
-    xr.addEventListener("sessionend", () => this.setSplatQuality(this.preferredSplatQuality ?? "fast"));
+    this._onSessionStart = () => this.setSplatQuality("fast");
+    this._onSessionEnd = () => this.setSplatQuality(this.preferredSplatQuality ?? "fast");
+    xr.addEventListener("sessionstart", this._onSessionStart);
+    xr.addEventListener("sessionend", this._onSessionEnd);
+  }
+
+  /** Drop XR listeners and GPU buffers once the flight leaves the scene (site switch). */
+  dispose() {
+    const xr = this.experience.renderer.instance.xr;
+    xr.removeEventListener("sessionstart", this._onSessionStart);
+    xr.removeEventListener("sessionend", this._onSessionEnd);
+    this.splatMesh?.dispose?.();
+    this.traverse((o) => {
+      if (o.isMesh && o !== this.splatMesh) {
+        o.geometry?.dispose?.();
+        for (const m of Array.isArray(o.material) ? o.material : [o.material]) m?.dispose?.();
+      }
+    });
   }
 
   /** Options of the Flight's ortho drape (lives on the Flight; the menu edits it here). */
@@ -53,7 +69,10 @@ export default class FlightModel extends THREE.Group {
 
   /** Skydio coverage mesh in the flight's local gravity-aligned frame. */
   loadCoverage(spec) {
-    new GLTFLoader().load(spec.file, (gltf) => {
+    // mesh.glb is meshopt-compressed (gltf-transform meshopt: 3.6 MB -> 0.65 MB for strip1)
+    const loader = new GLTFLoader();
+    loader.setMeshoptDecoder(MeshoptDecoder);
+    loader.load(spec.file, (gltf) => {
       const mesh = gltf.scene;
       mesh.traverse((o) => {
         if (o.isMesh) {
@@ -156,7 +175,7 @@ export default class FlightModel extends THREE.Group {
     try {
       if (key === "recon") {
         // meshopt-compressed glb (tools/reconstruct.py -> gltf-transform), possibly split into <5 MB parts
-        const buf = await fetchChunked(spec.file);
+        const buf = await fetchChunked(spec.file, null, spec.parts);
         const loader = new GLTFLoader();
         loader.setMeshoptDecoder(MeshoptDecoder);
         const gltf = await loader.parseAsync(buf, spec.file.replace(/[^/]*$/, ""));
@@ -193,7 +212,7 @@ export default class FlightModel extends THREE.Group {
 
   async makeSplat(spec) {
     const { SplatMesh, SplatFileType } = await import("./spark.module.js");
-    const bytes = new Uint8Array(await fetchChunked(spec.file));
+    const bytes = new Uint8Array(await fetchChunked(spec.file, null, spec.parts));
     const type = spec.file.endsWith(".sog") ? SplatFileType.PCSOGSZIP : spec.file.endsWith(".spz") ? SplatFileType.SPZ : SplatFileType.PLY;
     const splat = new SplatMesh({ fileBytes: bytes, fileType: type, blurAmount: 0.12, maxStdDev: 2.45, minAlpha: 1 / 255 });
     if (spec.frame?.startsWith("enu")) splat.rotation.x = -Math.PI / 2;

@@ -19,7 +19,7 @@ vertex-coloured scan mesh). Writes:
 gravity-aligned; yaw_deg rotates local +x toward east (fit by Procrustes against
 the geotags). The importer registers the flight in static/flights/index.json.
 """
-import argparse, base64, json, re, struct, sys
+import argparse, base64, json, re, struct, subprocess, sys
 from pathlib import Path
 import numpy as np
 from PIL import Image
@@ -115,15 +115,14 @@ def main():
     lon0, lat0 = to_wgs.transform(t[0], t[1])
     print(f"frame: {len(pairs)} poses, yaw {yaw:.2f}°, origin {lat0:.6f},{lon0:.6f} @ {z0:.1f} m, resid {resid:.2f} m")
 
-    # samples + waypoints
+    # samples (the app reads the trajectory from these; no separate waypoint list)
     tags = {n: xmp_tags(D / n) for n in names}
     t0 = min(int(tags[n].get("CaptureUtime", 0)) for n in names)
     date = None
-    waypoints, samples = [], []
+    samples = []
     for i, n in enumerate(names):
         lat, lon, alt, omega, phi, kappa = csv[n]
         tg = tags[n]; tsec = (int(tg.get("CaptureUtime", 0)) - t0) / 1e6
-        waypoints.append(dict(lat=round(lat, 7), lon=round(lon, 7), alt_msl=round(alt, 2), t=round(tsec, 1)))
         thumb = out / f"{i:03d}.jpg"
         if not thumb.exists(): thumbnail(D / n, thumb)
         samples.append(dict(
@@ -136,6 +135,8 @@ def main():
             image=f"./flights/{fid}/{i:03d}.jpg", source=n, notes="Skydio 3D Scan"))
         if i % 50 == 0: print(f"  {i}/{len(names)}")
     gltf_to_glb(D / "coverage_within_params.gltf", out / "mesh.glb")
+    # quantise + meshopt-compress the coverage mesh (~5x smaller; FlightModel loads it with the meshopt decoder)
+    subprocess.run(["npx", "-y", "@gltf-transform/cli", "meshopt", str(out / "mesh.glb"), str(out / "mesh.glb")], check=True)
 
     dt = D.name.split("__")[1].replace("-", ":", 2).replace("+00-00", "+00:00") if "__" in D.name else ""
     utcs = [s["utc"] for s in samples if s["utc"]]
@@ -146,7 +147,7 @@ def main():
         panel_fields=["id", "t", "lat", "lon", "alt_msl", "heading", "gimbal_pitch", "roll", "source"],
         mesh=dict(file=f"./flights/{fid}/mesh.glb", origin=dict(lat=lat0, lon=lon0, alt_msl=z0), yaw_deg=yaw,
                   fit_residual_m=resid, poses=len(pairs)),
-        waypoints=waypoints, samples=samples)
+        samples=samples)
     prev = FLIGHTS / f"{fid}.json"
     if prev.exists():  # keep a baked orthomosaic (bake_ortho.py) across re-imports
         old = json.loads(prev.read_text())

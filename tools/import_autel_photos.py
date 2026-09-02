@@ -71,12 +71,11 @@ def main():
         if i % 50 == 0: print(f"  {i}/{len(photos)}")
     records.sort(key=lambda r: (r["captured"], r["source"]))
     start = records[0]["captured"]
-    waypoints, samples = [], []
+    samples = []
     for i, record in enumerate(records):
         t = (record["captured"] - start).total_seconds()
         common = dict(t=round(t, 1), lat=round(record["lat"], 7), lon=round(record["lon"], 7),
                       alt_msl=round(record["alt_msl"], 2))
-        waypoints.append(common)
         samples.append(dict(id=record["source"].removesuffix(".JPG"), **common,
             utc=record["captured"].timestamp(), alt_agl=round(record["alt_agl"], 2),
             heading=round(record["heading"], 1), gimbal_pitch=round(record["gimbal_pitch"], 1),
@@ -89,7 +88,7 @@ def main():
         provenance=dict(source="External contributor", capture_date=start.date().isoformat(),
                         processing="EXIF GPS + XMP camera orientation; altitude provisional from AGL"),
         panel_fields=["id", "t", "lat", "lon", "alt_msl", "alt_agl", "heading", "gimbal_pitch", "source"],
-        waypoints=waypoints, samples=samples)
+        samples=samples)
     (FLIGHTS / f"{args.id}.json").write_text(json.dumps(flight))
     index_path = FLIGHTS / "index.json"; index = json.loads(index_path.read_text())
     index = [entry for entry in index if entry["id"] != args.id]
