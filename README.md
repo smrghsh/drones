@@ -162,6 +162,20 @@ Start selects the first available flight automatically. **Choose scan model…**
 opens direct buttons for every representation the active scan provides,
 including Gaussian splats when available.
 
+## Group ping (Issue #9)
+
+Use **Collaboration → Ping area (next click)** on desktop, or **Ping area** in
+the left-controller VR menu. Then click the terrain or a flight path, or aim
+the right-controller ray and press the right index trigger. Placement is
+one-shot and automatically disarms; selecting the command again cancels it.
+
+The sender and everyone joined to the same brahma room see an eight-second
+sender-colored ring, beacon, and name label. Pings use the farm model's local
+coordinates, so they remain attached to the same data location when users have
+different view scales or vertical exaggeration. Before joining a relay the
+control still creates a local preview and reports **LOCAL ONLY**. Pings are
+ephemeral and are not replayed to users who join after they were sent.
+
 ## Topography controls
 
 The desktop controls are in `#debug` → **Terrain**. In VR, the same scientific
