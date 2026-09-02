@@ -249,7 +249,7 @@ export default class World {
 
   /** Toggle one flight (from the Flight Selector) and resolve hover ownership. */
   setFlightVisible(flight, v) {
-    if (!v && this.ride.path === flight.path) {
+    if (!v && flight.path && this.ride.path === flight.path) {
       this.stopRide();
       this.ride.path = null;
       this.rideControls?.setVisible(false);
@@ -368,7 +368,7 @@ export default class World {
   startRide() {
     const ride = this.ride;
     if (!ride.path) {
-      const flight = this.flights.find((f) => f.visible && f.path.ridePointAt) ?? this.flights[0];
+      const flight = this.flights.find((f) => f.visible && f.path?.ridePointAt) ?? this.flights[0];
       if (flight) this.selectFlightForRide(flight);
     }
     const path = ride.path;

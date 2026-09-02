@@ -79,7 +79,7 @@ export default class VRMenu extends THREE.Group {
           this.world.selectFlightForRide(flight);
           this.showPage("main");
         },
-        () => this.world.ride.path === flight.path ? "SELECTED" : flight.visible ? "" : "HIDDEN",
+        () => flight.path && this.world.ride.path === flight.path ? "SELECTED" : flight.visible ? "" : "HIDDEN",
       )),
       this.button("back", "← Back to controls", () => this.showPage("main")),
       this.hint("Choose one route, then Start FPV"),
