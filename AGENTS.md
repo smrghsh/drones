@@ -35,6 +35,25 @@ via `path.colorBy(key)`). To add a flight from any source, write a record with
 "Flight Selector" (a visibility checkbox per flight; each flight owns its options
 folder and shows/hides it with its visibility).
 
+## Adding a scanned model (OBJ / zip)
+
+Externally produced building scans go through `tools/import_obj.py`:
+
+    uv run tools/import_obj.py data/<scan>.zip --id <id> --name "<display name>"
+
+The zip (or a bare `.obj` + `.mtl` + textures) must be georeferenced in a
+projected CRS (`--crs`, default UTM 10N `EPSG:32610`; heights orthometric).
+It produces `static/flights/<id>/recon.glb` (unlit, meshopt, WebP textures at
+`--texture-size 4096` / `--quality 80`), splits it into `--part-mb 24`
+segments (the unsplit `.glb` stays git-ignored), writes
+`static/flights/<id>.json` and registers it in `flights/index.json`. The
+record has no trajectory: it renders as a model-only `Flight` with the
+in-scene ScanMenu. Fit it with the lil-gui **Placement** folder (`#debug`) and
+paste "Copy placement JSON" into the record's `recon` spec. Raw inputs live in
+`data/` (git-ignored). After `npm run build`, run `git checkout -- docs/flights`
+and re-copy `static/flights/index.json` + the new json: the build empties
+`docs/` and the video chunks only exist in the committed copies.
+
 ## Verify loop (this is your test)
 
 1. `npm run dev` (app) and `npx brahma-xr-server` (relay) in two terminals.

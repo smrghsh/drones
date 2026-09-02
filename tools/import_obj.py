@@ -5,9 +5,13 @@
 """Import a textured, georeferenced OBJ scan (e.g. a building photogrammetry
 export in UTM metres) as a "recon" flight record the viewer can load.
 
-    uv run tools/import_obj.py data/slaughterhouse/obj/Mesh.obj \
-        --id slaughterhouse --name "Historic slaughterhouse" [--crs EPSG:32610]
-        [--texture-size 8192] [--quality 85] [--part-mb 24]
+    uv run tools/import_obj.py data/obj.zip --id slaughterhouse --name "Historic slaughterhouse"
+    uv run tools/import_obj.py data/<dir>/Mesh.obj --id <id> --name <name> \
+        [--crs EPSG:32610] [--texture-size 4096] [--quality 80] [--part-mb 24]
+
+A .zip is extracted next to itself into data/<id>/ and the first .obj inside
+(with its .mtl and textures) is used. Re-running overwrites the flight's
+assets, so tweak flags freely.
 
 Pipeline (all local, key-free):
   1. parse the OBJ (v / vt / f, one material group per texture atlas)
@@ -195,17 +199,29 @@ def weld(positions, uvs, faces):
 # ---------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("obj", type=Path)
+    ap.add_argument("obj", type=Path, help="an .obj, or a .zip containing one (extracted to data/<id>/)")
     ap.add_argument("--id", required=True, help="flight id (folder + json name under static/flights)")
     ap.add_argument("--name", required=True, help="display name")
     ap.add_argument("--crs", default="EPSG:32610", help="CRS of the OBJ vertices (default UTM 10N); heights are kept as-is (orthometric)")
-    ap.add_argument("--texture-size", type=int, default=8192, help="max texture edge (default 8192)")
-    ap.add_argument("--quality", type=int, default=85, help="WebP quality")
+    ap.add_argument("--texture-size", type=int, default=4096, help="max texture edge (default 4096; 8192 for full detail, ~4x the GPU memory)")
+    ap.add_argument("--quality", type=int, default=80, help="WebP quality (default 80)")
     ap.add_argument("--part-mb", type=float, default=24, help="segment size for the chunked GLB (MB)")
     ap.add_argument("--date", default=None, help="capture date (ISO) for the record")
     ap.add_argument("--source", default="External photogrammetry export (OBJ + SLPK)", help="provenance note")
     ap.add_argument("--no-meshopt", action="store_true", help="skip gltf-transform compression")
     a = ap.parse_args()
+
+    if a.obj.suffix.lower() == ".zip":
+        import zipfile
+        dest = a.obj.parent / a.id
+        log(f"extracting {a.obj} -> {dest}")
+        with zipfile.ZipFile(a.obj) as z:
+            z.extractall(dest)
+        objs = sorted(p for p in dest.rglob("*.obj") if not p.name.startswith("."))
+        if not objs:
+            raise SystemExit(f"no .obj inside {a.obj}")
+        a.obj = objs[0]
+        log(f"  using {a.obj.relative_to(dest)}" + (f" (of {len(objs)} .obj files)" if len(objs) > 1 else ""))
 
     out_dir = REPO / "static/flights" / a.id
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -251,7 +267,9 @@ def main():
         raw.unlink()
         log(f"  {glb.name}: {glb.stat().st_size/1e6:.1f} MB")
 
-    parts = chunk(glb, int(a.part_mb * 1_000_000)) if glb.stat().st_size > a.part_mb * 1_000_000 else 0
+    # always ship as .partNN + manifest (a single part when small): the bare
+    # recon.glb is git-ignored, and this also clears stale parts of a previous run
+    parts = chunk(glb, int(a.part_mb * 1_000_000))
 
     record = {
         "id": a.id,

@@ -95,11 +95,12 @@ Everything is baked once into `static/` by two scripts — see `tools/`:
   needs nanoflann/TinyEXIF/TinyNPY), and `brush_app` (cargo, tagged release,
   `--locked`; set `BRUSH_BIN`). On an M2 Max: SfM ~30 min, dense mesh ~1.5 h,
   splat ~1 h per scan (much longer if the machine is busy).
-- `uv run tools/import_obj.py data/<dir>/Mesh.obj --id <id> --name <name>` —
-  imports an externally produced, **georeferenced OBJ scan** (e.g. a building
-  photogrammetry export in UTM metres, `--crs EPSG:32610` by default) as a
-  model-only flight: the OBJ is welded into an unlit, meshopt-compressed GLB
-  with WebP textures (`--texture-size 8192`), split into `--part-mb 24`
+- `uv run tools/import_obj.py data/<scan>.zip --id <id> --name <name>` —
+  imports an externally produced, **georeferenced OBJ scan** (a zip or a bare
+  `.obj`; e.g. a building photogrammetry export in UTM metres, `--crs
+  EPSG:32610` by default) as a model-only flight: the OBJ is welded into an
+  unlit, meshopt-compressed GLB with WebP textures (`--texture-size 4096
+  --quality 80`; `8192` for full detail), split into `--part-mb 24`
   segments, and registered with its WGS84 origin in the `enu_msl` frame. The
   record has no trajectory, so the viewer shows only the model and its
   in-scene menu. With `#debug`, the flight's **Placement** folder nudges the
