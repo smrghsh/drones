@@ -1,7 +1,7 @@
 import * as THREE from "three";
 
-// Scene-scale contract. The farm is a 1200 m square baked into a local
-// tangent plane (see tools/prep_farm.py): x = east, z = -north, y = up.
+// Scene-scale contract. A site is a 1200 m square baked into a local tangent
+// plane (see tools/prep_farm.py): x = east, z = -north, y = up.
 export const METERS_PER_UNIT = 40; // 1200 m -> 30 units: a room-scale landscape; a 30 m scan is ~0.75 units
 export const MODEL_Y = 0.75; // table height, so it sits nicely in VR
 
@@ -9,12 +9,20 @@ export const settings = {
   verticalExaggeration: 1.0,
 };
 
+// The current site: its site.json (centre, extent, elevation range) plus the
+// `id`/`dir` of the static/sites.json entry it was loaded from. Every
+// projection below is relative to it, so it is swapped wholesale by
+// World.loadSite() and everything geo is rebuilt.
 let site = null;
 export function setSite(s) {
   site = s;
 }
 export function getSite() {
   return site;
+}
+/** URL of a file inside the current site's directory (`./farm/height.png`). */
+export function siteUrl(file) {
+  return `${(site?.dir ?? "./farm").replace(/\/$/, "")}/${file}`;
 }
 
 const R = 6378137;

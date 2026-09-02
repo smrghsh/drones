@@ -300,6 +300,16 @@ export default class FlightPath extends THREE.Group {
     }
     if (this.colorKey) active ? this.colorBy(this.colorKey) : hideLegend(); // keep the legend in sync
   }
+
+  /** Release GPU buffers once the path has left the scene (site switch). */
+  dispose() {
+    this.geometry.dispose();
+    this.material.dispose();
+    this.samples?.geometry.dispose();
+    this.samples?.material.dispose();
+    this.marker.geometry.dispose();
+    this.marker.material.dispose();
+  }
 }
 
 function nanFallback(v, d) {

@@ -10,7 +10,7 @@
 #   "pyproj",
 # ]
 # ///
-"""One-shot geodata prep for the drones web app (UC Santa Cruz Farm).
+"""One-shot geodata prep for a drones web-app site (default: UC Santa Cruz Farm).
 
 Fetches NAIP aerial imagery (0.6 m) and 3DEP lidar DSM (1 m) from Microsoft
 Planetary Computer -- anonymously signed, no API keys -- and reprojects both
@@ -18,15 +18,22 @@ into a local azimuthal-equidistant grid centred on the site, so the runtime
 projection is a plain tangent plane: x = east metres, z = -north metres.
 
 Writes:
-    static/farm/imagery.jpg   IMG_PX x IMG_PX true-color
-    static/farm/height.png    HGT_PX x HGT_PX RGB Terrarium-encoded elevation
-    static/farm/site.json     centre, extent, elevation range, grid sizes
+    static/<site>/imagery.jpg   IMG_PX x IMG_PX true-color
+    static/<site>/height.png    HGT_PX x HGT_PX RGB Terrarium-encoded elevation
+    static/<site>/site.json     centre, extent, elevation range, grid sizes
 
-Run:  uv run tools/prep_farm.py
-Raw downloads are cached in tools/cache/ so re-runs work offline.
+Run:  uv run tools/prep_farm.py                                   # the farm
+      uv run tools/prep_farm.py --site sankie --lat 36.45698 --lon -121.46667 \\
+          --name "Salinas Valley (Chualar) — air quality"          # a new site
+      uv run tools/prep_farm.py --site sankie                      # re-run: centre read from site.json
+
+Then list the site in static/sites.json (id, name, dir, flights index) so the
+app's site switcher offers it. Raw downloads are cached per site in
+tools/cache/ so re-runs work offline.
 """
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -34,17 +41,23 @@ import numpy as np
 
 REPO = Path(__file__).resolve().parent.parent
 CACHE = Path(__file__).resolve().parent / "cache"
-OUT = REPO / "static" / "farm"
 STAC_URL = "https://planetarycomputer.microsoft.com/api/stac/v1"
 
-SITE = {
+FARM = {
     "name": "UC Santa Cruz Farm (CASFS)",
     "lat": 36.9826,
     "lon": -122.0552,
     "size_m": 1200.0,      # square extent, metres
 }
+SITE = dict(FARM)          # the site being prepared (set by parse_args())
+SITE_ID = "farm"
+OUT = REPO / "static" / SITE_ID
 IMG_PX = 2048
 HGT_PX = 513
+
+def cache_path(kind):
+    # the farm keeps its pre-existing cache file names
+    return CACHE / (f"{kind}.npz" if SITE_ID == "farm" else f"{SITE_ID}-{kind}.npz")
 
 def local_crs():
     return (f"+proj=aeqd +lat_0={SITE['lat']} +lon_0={SITE['lon']} "
@@ -85,7 +98,7 @@ def warp_to_grid(href, bands, px, resampling, nodata=None):
     return dst
 
 def fetch_naip():
-    npz = CACHE / "naip.npz"
+    npz = cache_path("naip")
     if npz.exists():
         return np.load(npz)["rgb"]
     items = list(catalog().search(collections=["naip"], bbox=bbox_wgs84()).items())
@@ -107,7 +120,7 @@ def fetch_naip():
     return rgb
 
 def fetch_dsm():
-    npz = CACHE / "dsm.npz"
+    npz = cache_path("dsm")
     if npz.exists():
         return np.load(npz)["z"]
     cat = catalog()
@@ -142,9 +155,39 @@ def terrarium(z):
     r = np.floor(v / 65536) ; g = np.floor((v - r * 65536) / 256) ; b = np.floor(v - r * 65536 - g * 256)
     return np.stack([r, g, b], -1).clip(0, 255).astype(np.uint8)
 
+def parse_args():
+    global SITE, SITE_ID, OUT
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--site", default="farm", help="site id: output goes to static/<site>/")
+    ap.add_argument("--name", help="display name (stored in site.json)")
+    ap.add_argument("--lat", type=float, help="centre latitude (deg)")
+    ap.add_argument("--lon", type=float, help="centre longitude (deg)")
+    ap.add_argument("--size", type=float, help="square extent in metres (default 1200)")
+    a = ap.parse_args()
+    SITE_ID = a.site
+    OUT = REPO / "static" / SITE_ID
+    existing = OUT / "site.json"
+    if SITE_ID == "farm":
+        base = dict(FARM)
+    elif existing.exists():
+        base = {k: v for k, v in json.loads(existing.read_text()).items() if k in ("name", "lat", "lon", "size_m")}
+    else:
+        base = {"size_m": 1200.0}
+    if a.name is not None: base["name"] = a.name
+    if a.lat is not None: base["lat"] = a.lat
+    if a.lon is not None: base["lon"] = a.lon
+    if a.size is not None: base["size_m"] = a.size
+    base.setdefault("name", SITE_ID)
+    if "lat" not in base or "lon" not in base:
+        ap.error(f"--lat/--lon are required for a new site (no {existing})")
+    SITE = base
+    return a
+
 def main():
     from PIL import Image
     from scipy.ndimage import median_filter, gaussian_filter
+    parse_args()
+    print(f"site {SITE_ID}: {SITE['name']} @ {SITE['lat']}, {SITE['lon']} ({SITE['size_m']:.0f} m)")
     OUT.mkdir(parents=True, exist_ok=True)
     rgb = fetch_naip()
     Image.fromarray(np.moveaxis(rgb, 0, -1)).save(OUT / "imagery.jpg", quality=88)

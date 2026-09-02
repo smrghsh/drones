@@ -6,7 +6,7 @@
  */
 import * as THREE from "three";
 import { Experience } from "brahma-xr";
-import { METERS_PER_UNIT, settings, getSite, sceneToMetres, fromLocalMetres } from "./domain.js";
+import { METERS_PER_UNIT, settings, getSite, siteUrl, sceneToMetres, fromLocalMetres } from "./domain.js";
 
 const vertexShader = /* glsl */ `
 uniform float uZCenter;
@@ -63,6 +63,7 @@ uniform float uMetresPerTexel;
 uniform float uExaggeration;
 uniform vec3 uSun;
 uniform float uImageryMix;
+uniform vec2 uHypso;      // elevation range (m MSL) the hypsometric tint spans
 uniform vec2 uOrthoGate;
 uniform vec2 uCutMin;     // model-frame xz box carved out of this mesh (the detail patch lives there)
 uniform vec2 uCutMax;
@@ -81,7 +82,7 @@ void main(){
   vec3 n = normalize(vec3(-(zr-zl)*uExaggeration, -(zu-zd)*uExaggeration, 2.0*uMetresPerTexel));
   float light = 0.45 + 0.65 * max(dot(n, normalize(uSun)), 0.0);
   vec3 img = groundColor(vXZ, vUvImagery, uOrthoGate);
-  vec3 hyps = mix(vec3(0.16,0.24,0.14), vec3(0.75,0.68,0.5), smoothstep(80.0, 175.0, vHeight));
+  vec3 hyps = mix(vec3(0.16,0.24,0.14), vec3(0.75,0.68,0.5), smoothstep(uHypso.x, uHypso.y, vHeight));
   vec3 col = mix(hyps, img, uImageryMix) * light;
   gl_FragColor = vec4(col, 1.0);
   #include <colorspace_fragment>
@@ -117,7 +118,10 @@ void main(){
   #include <colorspace_fragment>
 }`;
 
-/** Satellite-draped heightfield of the farm. Also answers heightAt(e, n). */
+/**
+ * Satellite-draped heightfield of the current site (domain.getSite(), assets
+ * under the site's directory). Also answers heightAt(e, n).
+ */
 export default class Terrain extends THREE.Group {
   constructor() {
     super();
@@ -206,12 +210,12 @@ export default class Terrain extends THREE.Group {
 
   async load() {
     const [heightBmp, imagery] = await Promise.all([
-      fetch("./farm/height.png")
+      fetch(siteUrl("height.png"))
         .then((r) => r.blob())
         .then((b) =>
           createImageBitmap(b, { colorSpaceConversion: "none", premultiplyAlpha: "none" }),
         ),
-      new THREE.TextureLoader().loadAsync("./farm/imagery.jpg"),
+      new THREE.TextureLoader().loadAsync(siteUrl("imagery.jpg")),
     ]);
 
     // CPU copy for heightAt()
@@ -244,6 +248,7 @@ export default class Terrain extends THREE.Group {
       uExaggeration: { value: 1 },
       uSun: { value: new THREE.Vector3(-0.6, 0.55, 0.45) }, // lowish sun so relief reads
       uImageryMix: { value: 1.0 },
+      uHypso: { value: new THREE.Vector2(this.site.z_min, this.site.z_max) },
       uOrthoGate: { value: new THREE.Vector2(1, 1) },
       uOrigin: { value: new THREE.Vector2(0, 0) },
       uSiteSize: { value: this.size },
@@ -316,9 +321,9 @@ export default class Terrain extends THREE.Group {
    * carved out inside its footprint and heightAt() prefers it.
    */
   async loadDetail() {
-    const meta = await fetch("./farm/detail.json").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    const meta = await fetch(siteUrl("detail.json")).then((r) => (r.ok ? r.json() : null)).catch(() => null);
     if (!meta) return;
-    const bmp = await fetch("./farm/detail_height.png").then((r) => r.blob())
+    const bmp = await fetch(siteUrl("detail_height.png")).then((r) => r.blob())
       .then((b) => createImageBitmap(b, { colorSpaceConversion: "none", premultiplyAlpha: "none" }));
     const c = new OffscreenCanvas(bmp.width, bmp.height);
     const ctx = c.getContext("2d", { willReadFrequently: true });
@@ -477,6 +482,25 @@ export default class Terrain extends THREE.Group {
   setExaggeration(v) {
     if (!this.uniforms) return;
     this.uniforms.uExaggeration.value = v;
+  }
+
+  /** Release GPU resources and leave the pointer's selectable set (site switch). */
+  dispose() {
+    const list = this.experience.selectableObjects;
+    const i = list.indexOf(this);
+    if (i >= 0) list.splice(i, 1);
+    if (this.hover) this.onUnhover();
+    this.traverse((o) => {
+      o.geometry?.dispose?.();
+      if (o.material && o !== this.mesh && o !== this.detail?.mesh && o !== this.detail?.lowMesh) o.material.dispose?.();
+    });
+    this.mesh?.material.dispose();
+    this.detail?.mesh.material.dispose();
+    for (const k of ["uHeight", "uImagery"]) this.uniforms?.[k].value?.dispose?.();
+    this.detail?.mesh.material.uniforms.uHeight.value?.dispose?.();
+    for (const [tex, mask] of this.orthoTex?.values() ?? []) { tex.dispose(); mask.dispose(); }
+    this.labelTex?.dispose();
+    this.clear();
   }
 
   /** Ground elevation (m MSL) at local metres east/north; bilinear. */
