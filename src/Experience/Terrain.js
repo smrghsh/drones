@@ -209,6 +209,8 @@ export default class Terrain extends THREE.Group {
   hideSphere() {}
 
   async load() {
+    // the detail patch's files download alongside the coarse ones (applied after the base mesh exists)
+    const detail = this.fetchDetail();
     const [heightBmp, imagery] = await Promise.all([
       fetch(siteUrl("height.png"))
         .then((r) => r.blob())
@@ -311,8 +313,17 @@ export default class Terrain extends THREE.Group {
     base.raycast = () => {};
     this.base = base;
     this.add(base);
-    await this.loadDetail();
+    this.applyDetail(await detail);
     return this;
+  }
+
+  /** Fetch the detail patch's metadata + heightfield (null when the site has none). */
+  async fetchDetail() {
+    const meta = await fetch(siteUrl("detail.json")).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    if (!meta) return null;
+    const bmp = await fetch(siteUrl("detail_height.png")).then((r) => r.blob())
+      .then((b) => createImageBitmap(b, { colorSpaceConversion: "none", premultiplyAlpha: "none" }));
+    return { meta, bmp };
   }
 
   /**
@@ -320,11 +331,9 @@ export default class Terrain extends THREE.Group {
    * rasterised at ~0.35 m) under the scans. Same shader; the coarse mesh is
    * carved out inside its footprint and heightAt() prefers it.
    */
-  async loadDetail() {
-    const meta = await fetch(siteUrl("detail.json")).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    if (!meta) return;
-    const bmp = await fetch(siteUrl("detail_height.png")).then((r) => r.blob())
-      .then((b) => createImageBitmap(b, { colorSpaceConversion: "none", premultiplyAlpha: "none" }));
+  applyDetail(detail) {
+    if (!detail) return;
+    const { meta, bmp } = detail;
     const c = new OffscreenCanvas(bmp.width, bmp.height);
     const ctx = c.getContext("2d", { willReadFrequently: true });
     ctx.drawImage(bmp, 0, 0);

@@ -98,6 +98,11 @@ export default class World {
     try {
       this.unloadSite();
       this.site = entry;
+      // The flight index and records only depend on the site entry, so they
+      // download alongside site.json and the terrain instead of after them.
+      const records = fetch(entry.flights)
+        .then((r) => (r.ok ? r.json() : []))
+        .then((index) => Promise.all(index.map((f) => Flight.fetchRecord(f.file, f.voxels != null ? { voxels: f.voxels } : null))));
       const site = await fetch(`${entry.dir}/site.json`).then((r) => r.json());
       setSite({ ...site, id: entry.id, dir: entry.dir });
 
@@ -107,12 +112,11 @@ export default class World {
       this.terrain.setExaggeration(this.params?.exaggeration ?? 1);
       this.terrain.uniforms.uImageryMix.value = this.params?.imagery ?? 1;
 
-      const index = await fetch(entry.flights).then((r) => (r.ok ? r.json() : []));
+      // Flights project through the site and drape over the terrain, so they
+      // are built only now, from the records fetched in the background.
       const ctx = { panel: this.panel, videoPanel: this.videoPanel };
-      this.flights = await Promise.all(
-        index.map((f, i) =>
-          Flight.load(f.file, { ...ctx, color: PATH_COLORS[i % PATH_COLORS.length] }, f.voxels != null ? { voxels: f.voxels } : null),
-        ),
+      this.flights = (await records).map((record, i) =>
+        Flight.from(record, { ...ctx, color: PATH_COLORS[i % PATH_COLORS.length] }),
       );
       for (const f of this.flights) this.model.add(f);
       this.updateEmphasis();
@@ -668,6 +672,7 @@ export default class World {
       if (this.ride.time >= this.rideDuration()) this.stopRide();
       else this.updateRidePose();
     }
+    this.terrain?.update(); // detail-patch LOD: light mesh while moving / in XR
     this.panel?.update();
     this.videoPanel?.update();
     for (const f of this.flights) f.update();

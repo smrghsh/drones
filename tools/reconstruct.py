@@ -154,8 +154,8 @@ def stage_mesh(D, W, a, fid):
         sh(["npx", "-y", "@gltf-transform/cli", "optimize", mvs / "scene_dense_mesh_texture.glb", mvs / "recon_opt.glb",
             "--compress", "meshopt", "--texture-compress", "webp", "--texture-size", "4096"], log, cwd=mvs)
     shutil.copy(mvs / "recon_opt.glb", out / "recon.glb")
-    register(fid, "recon", f"./flights/{fid}/recon.glb", W)
     sh(["uv", "run", REPO / "tools/chunk_assets.py", out / "recon.glb"], log)
+    register(fid, "recon", f"./flights/{fid}/recon.glb", W)
     print("wrote", out / "recon.glb", (out / "recon.glb").stat().st_size // 1024, "KB")
 
 # ---------------------------------------------------------------- splat (Brush)
@@ -175,8 +175,8 @@ def stage_splat(D, W, a, fid):
     ply = prune_splats(ply, W, margin=a.splat_margin)
     # PLY is ~240 B/splat (350 MB for 1.5 M); SOG (PlayCanvas splat-transform) is ~15x smaller and Spark loads it directly
     sh(["npx", "-y", "@playcanvas/splat-transform", "-w", ply, out / "splat.sog"], log)
-    register(fid, "splat", f"./flights/{fid}/splat.sog", W)
     sh(["uv", "run", REPO / "tools/chunk_assets.py", out / "splat.sog"], log)
+    register(fid, "splat", f"./flights/{fid}/splat.sog", W)
     print("wrote", out / "splat.sog", (out / "splat.sog").stat().st_size // 1024, "KB")
 
 def prune_splats(ply, W, margin=8.0):
@@ -206,8 +206,11 @@ def prune_splats(ply, W, margin=8.0):
 def register(fid, key, file, W):
     o = json.loads((W / "origin.json").read_text())
     fj = FLIGHTS / f"{fid}.json"; flight = json.loads(fj.read_text())
+    # `parts` (from chunk_assets.py's manifest; 0 = plain file) lets fetchChunked skip a probing round trip
+    manifest = REPO / "static" / (file.lstrip("./") + ".parts.json")
+    parts = json.loads(manifest.read_text())["parts"] if manifest.exists() else 0
     flight[key] = dict(file=file, origin=dict(lat=o["lat"], lon=o["lon"], alt_msl=0.0), offset_m=o.get("offset_m", [0, 0, 0]),
-                       yaw_deg=0.0, frame="enu_msl")
+                       yaw_deg=0.0, frame="enu_msl", parts=parts)
     fj.write_text(json.dumps(flight))
 
 def main():

@@ -25,7 +25,7 @@ npm install
 npm run dev            # https://localhost:5173  (accept the self-signed cert)
 NO_SSL=1 npm run dev   # plain http — handy on desktop
 npx brahma-xr-server   # optional multiplayer relay
-npm run build          # -> docs/ (GitHub Pages)
+npm run build          # -> docs/ (git-ignored; GitHub Pages builds it via .github/workflows/pages.yml)
 ```
 
 For a headset, run the default HTTPS server (without `NO_SSL`), open the LAN
@@ -94,10 +94,8 @@ Everything is baked once into `static/` by two scripts — see `tools/`:
   samples. The video is re-encoded into 10 s, 540p, keyframe-aligned chunks
   (`chunks/NNN.mp4`, ≤ ~2.5 MB each, so GitHub Pages serves them instantly)
   plus a 1 fps contact strip per chunk. `--pin lat,lon,alt` places a video
-  with no trajectory source. The chunk/poster dirs under `static/` are
-  git-ignored (only the built copies in `docs/` are committed, ~130 MB per
-  video) — on a fresh clone, re-run the importer from `data/` before
-  `npm run build`, since the build empties `docs/`. Corrupt photos (a handful per SD card) are
+  with no trajectory source. The chunk/poster dirs are committed under
+  `static/flights/<id>/` (~100 MB per video). Corrupt photos (a handful per SD card) are
   tolerated by both importers: XMP is read from raw bytes and the embedded
   preview stands in for the thumbnail.
 

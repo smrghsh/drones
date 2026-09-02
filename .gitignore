@@ -1,16 +1,14 @@
 node_modules/
 tools/cache/
 # Raw drone captures are local inputs and must never be committed. Generated,
-# web-ready paths, thumbnails, orthos and chunked models live in static/flights/.
+# web-ready paths, thumbnails, orthos, video chunks and chunked models live in
+# static/flights/ (video chunks are 10 s / ~2 MB each; posters are contact strips).
 /data/
 .DS_Store
-# video chunks are large; the built copies in docs/ are what Pages serves — regenerate with tools/import_video.py
-static/flights/*/chunks/
-static/flights/*/posters/
+# Vite build output; GitHub Pages deploys it from .github/workflows/pages.yml
+/docs/
 static/flights/*/splat.ply
 # big reconstruction outputs ship as <5 MB .partNN files (tools/chunk_assets.py); originals stay local
 static/flights/*/recon.glb
 static/flights/*/splat.sog
-docs/flights/*/recon.glb
-docs/flights/*/splat.sog
 __pycache__/
