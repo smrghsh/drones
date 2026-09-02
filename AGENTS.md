@@ -62,9 +62,8 @@ segments (the unsplit `.glb` stays git-ignored), writes
 record has no trajectory: it renders as a model-only `Flight` with the
 in-scene ScanMenu. Fit it with the lil-gui **Placement** folder (`#debug`) and
 paste "Copy placement JSON" into the record's `recon` spec. Raw inputs live in
-`data/` (git-ignored). After `npm run build`, run `git checkout -- docs/flights`
-and re-copy `static/flights/index.json` + the new json: the build empties
-`docs/` and the video chunks only exist in the committed copies.
+`data/` (git-ignored). Commit what lands under `static/` — `docs/` is not
+tracked; GitHub Pages builds it from `main` (`.github/workflows/pages.yml`).
 
 ## Verify loop (this is your test)
 
@@ -76,7 +75,13 @@ and re-copy `static/flights/index.json` + the new json: the build empties
 ## Conventions
 
 - Vite app: `root src/`, assets in `static/`, build output in `docs/`
-  (GitHub Pages). HTTPS in dev because WebXR requires a secure context.
+  (git-ignored; the Pages workflow builds and deploys it on every push to
+  `main`). HTTPS in dev because WebXR requires a secure context.
+- Keep first load light: the sky is an sRGB JPEG (no EXR), coverage meshes are
+  meshopt-compressed (`gltf-transform meshopt`), split assets carry `parts`
+  in their record so `fetchChunked` never probes, and the flight index is
+  fetched in parallel with the terrain. Anything the pointer must not test
+  gets `raycast = () => {}`.
 - Multiplayer messages: the server assigns your name/color (`welcome`), poses
   are three 4x4 matrices, and `networking.sendCalloutUpdate(visible,
   position, payload)` shares an app-defined annotation — implement

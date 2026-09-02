@@ -1,4 +1,0 @@
-[
-  { "id": "farm", "name": "UC Santa Cruz Farm", "dir": "./farm", "flights": "./flights/index.json" },
-  { "id": "sankie", "name": "Salinas Valley — sankie air quality", "dir": "./sankie", "flights": "./sankie/flights/index.json" }
-]
