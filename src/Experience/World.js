@@ -1,7 +1,7 @@
 /** World wiring for terrain, flights, viewpoints, and the comfort-aware FPV ride. */
 import * as THREE from "three";
 import { Experience, Environment } from "brahma-xr";
-import { setSite, MODEL_Y, settings } from "./domain.js";
+import { setSite, getSite, MODEL_Y, METERS_PER_UNIT, settings } from "./domain.js";
 import { hideLegend } from "./colormap.js";
 import Sky from "./Sky.js";
 import Stars from "./Stars.js";
@@ -9,19 +9,26 @@ import Terrain from "./Terrain.js";
 import Flight from "./Flight.js";
 import SamplePanel from "./SamplePanel.js";
 import VideoPanel from "./VideoPanel.js";
-import RideControls from "./RideControls.js";
 import VRMenu from "./VRMenu.js";
+import Smartwatch from "./Smartwatch.js";
 
 const PATH_COLORS = [0xffb347, 0x5ec8ff, 0xff6b9d, 0x9dff6b];
 // Fallback when static/sites.json is missing: the original single-site layout.
 const DEFAULT_SITES = [{ id: "farm", name: "UC Santa Cruz Farm", dir: "./farm", flights: "./flights/index.json" }];
+// World scaling. `scale` is the model group's scale; one metre of XR space then
+// spans METERS_PER_UNIT / scale metres of world, which is what the label says.
+// `mode` picks the desktop camera treatment: "table" (look down at a diorama),
+// "fly" (focus() on the terrain, `zoom` multiplies the distance) or "human"
+// (eye height on the ground). `ground` drops the model so the terrain at the
+// site centre sits at y = 0 — a 1:1 world you can stand on.
+const ratio = (scale) => `${METERS_PER_UNIT / scale} m : 1 m`;
 const VIEW_PRESETS = [
-  { label: "Human scale", mode: "human", zoom: 1 },
-  { label: "Table diorama", mode: "table", zoom: 1 },
-  { label: "Drone overview", mode: "fly", zoom: 1 },
-  { label: "Close-up", mode: "fly", zoom: 0.45 },
-  { label: "High altitude", mode: "fly", zoom: 2.2 },
+  { label: `${ratio(0.05)} · tabletop`, mode: "table", scale: 0.05, position: [0, 0.85, -0.8] },
+  { label: `${ratio(1)} · overview`, mode: "fly", scale: 1, position: [0, MODEL_Y, 0], zoom: 1 },
+  { label: `${ratio(4)} · close`, mode: "fly", scale: 4, position: [0, MODEL_Y, 0], zoom: 0.45 },
+  { label: `${ratio(METERS_PER_UNIT)} · true scale`, mode: "human", scale: METERS_PER_UNIT, position: [0, 0, 0], ground: true },
 ];
+const DEFAULT_VIEW_PRESET = 1;
 
 export default class World {
   constructor() {
@@ -37,8 +44,15 @@ export default class World {
     this.model.position.y = MODEL_Y;
     this.scene.add(this.model);
 
-    this.currentScale = 1.0;
-    this.viewPresetIndex = 2;
+    this.currentScale = VIEW_PRESETS[DEFAULT_VIEW_PRESET].scale;
+    this.viewPresetIndex = DEFAULT_VIEW_PRESET;
+    // brahma's camera defaults to far = 1000; at 1 m : 1 m the 1200 m site
+    // would be clipped. WebXR's cameras inherit near/far from this one.
+    const camera = this.experience.camera?.instance;
+    if (camera && camera.far < 2000) {
+      camera.far = 5000;
+      camera.updateProjectionMatrix();
+    }
     /** @type {{id:string, name:string, dir:string, flights:string}[]} static/sites.json */
     this.sites = [];
     /** the sites.json entry currently loaded */
@@ -68,10 +82,10 @@ export default class World {
     this.model.add(this.panel);
     this.videoPanel = new VideoPanel();
     this.model.add(this.videoPanel);
-    this.rideControls = new RideControls(this);
-    this.scene.add(this.rideControls);
     this.vrMenu = new VRMenu(this);
     this.scene.add(this.vrMenu);
+    this.smartwatch = new Smartwatch(this);
+    this.scene.add(this.smartwatch);
     this.setDebug();
     this.setupSiteSelect();
 
@@ -104,6 +118,7 @@ export default class World {
       this.terrain = new Terrain();
       this.model.add(this.terrain);
       await this.terrain.load();
+      this.smartwatch?.setSite();
       this.terrain.setExaggeration(this.params?.exaggeration ?? 1);
       this.terrain.uniforms.uImageryMix.value = this.params?.imagery ?? 1;
 
@@ -130,7 +145,6 @@ export default class World {
   unloadSite() {
     this.stopRide();
     this.ride.path = null;
-    this.rideControls?.setVisible(false);
     for (const p of [this.panel, this.videoPanel]) { p?.setPinned(false); p?.hide(); }
     for (const f of this.flights) { this.model.remove(f); f.dispose(); }
     this.flights = [];
@@ -188,63 +202,67 @@ export default class World {
     for (const fl of this.flights) fl.addGui(f);
   }
 
-  /** Set view modes: 'table', 'human', or 'fly' with camera zoom distance multiplier */
-  setViewMode(mode, zoomFactor = 1.0) {
-    const preset = VIEW_PRESETS.findIndex((entry) => entry.mode === mode && entry.zoom === zoomFactor);
-    if (preset >= 0) this.viewPresetIndex = preset;
+  // ---- world scaling --------------------------------------------------------
+  /** Apply VIEW_PRESETS[index]: scale + place the model, then seat the desktop camera. */
+  applyPreset(index) {
+    const preset = VIEW_PRESETS[index];
+    if (!preset) return;
+    this.viewPresetIndex = index;
     const vExag = this.params?.exaggeration ?? 1.0;
     const cam = this.experience.camera;
-    const moveDesktopCamera = !this.experience.isXRActive();
+    const [x, y, z] = preset.position;
 
-    if (mode === "table") {
-      // 1.2m tabletop diorama
-      this.currentScale = 0.05;
-      this.model.scale.set(0.05, 0.05 * vExag, 0.05);
-      this.model.position.set(0, 0.85, -0.8);
-      this.model.updateMatrixWorld(true);
+    this.currentScale = preset.scale;
+    this.model.scale.set(preset.scale, preset.scale * vExag, preset.scale);
+    this.model.position.set(x, y, z);
+    if (preset.ground && this.terrain) {
+      // terrain height at the site centre (model frame, before exaggeration)
+      const groundUnits = (this.terrain.heightAt(0, 0) - (getSite()?.z_center ?? 0)) / METERS_PER_UNIT;
+      this.model.position.y = y - groundUnits * preset.scale * vExag;
+    }
+    this.model.updateMatrixWorld(true);
 
-      if (moveDesktopCamera && cam?.controls) {
-        cam.controls.target.set(0, 0.85, -0.8);
-        cam.instance.position.set(0, 1.4, 0.2);
-        cam.instance.lookAt(0, 0.85, -0.8);
-        cam.controls.update();
-      }
-    } else if (mode === "human") {
-      // 1:1 true scale, grounded, camera at 1.7m human eye height
-      this.currentScale = 1.0;
-      this.model.scale.set(1.0, 1.0, 1.0);
-      this.model.position.set(0, 0, 0);
-      this.model.updateMatrixWorld(true);
-
-      if (moveDesktopCamera && cam?.controls && this.terrain) {
-        const box = new THREE.Box3().setFromObject(this.terrain.mesh);
-        const center = box.getCenter(new THREE.Vector3());
-
-        cam.instance.position.set(center.x, center.y + 1.7, center.z + 5.0);
-        cam.controls.target.set(center.x, center.y + 1.6, center.z);
+    if (!this.experience.isXRActive() && cam?.controls) {
+      if (preset.mode === "table") {
+        cam.controls.target.set(x, y, z);
+        cam.instance.position.set(x, y + 0.55, z + 1.0);
         cam.instance.lookAt(cam.controls.target);
         cam.controls.update();
+      } else if (preset.mode === "human") {
+        // eye height on the (grounded) site centre, looking north
+        cam.instance.position.set(0, 1.7, 5.0);
+        cam.controls.target.set(0, 1.6, 0);
+        cam.instance.lookAt(cam.controls.target);
+        cam.controls.update();
+      } else {
+        // zoom < 1 moves closer, > 1 further
+        this.focus(null, preset.zoom ?? 1);
       }
-    } else {
-      // Normal fly scale at MODEL_Y
-      this.currentScale = 1.0;
-      this.model.scale.set(1.0, vExag, 1.0);
-      this.model.position.set(0, MODEL_Y, 0);
-      this.model.updateMatrixWorld(true);
-      // zoomFactor < 1.0 moves closer, > 1.0 moves further
-      if (moveDesktopCamera) this.focus(null, zoomFactor);
     }
     this.vrMenu?.refresh();
   }
 
+  /**
+   * Legacy entry point (callouts, older callers): 'table' | 'fly' | 'human',
+   * mapped to the nearest preset — by `scale` when given, else by the fly
+   * `zoomFactor`, else the first preset of that mode.
+   */
+  setViewMode(mode, zoomFactor = 1.0, scale) {
+    const candidates = VIEW_PRESETS.map((p, i) => [p, i]).filter(([p]) => p.mode === mode);
+    if (!candidates.length) return;
+    const [, index] =
+      candidates.find(([p]) => scale != null && p.scale === scale) ??
+      candidates.find(([p]) => (p.zoom ?? 1) === zoomFactor) ??
+      candidates[0];
+    this.applyPreset(index);
+  }
+
   viewPresetLabel() {
-    return VIEW_PRESETS[this.viewPresetIndex]?.label ?? "Drone overview";
+    return VIEW_PRESETS[this.viewPresetIndex]?.label ?? VIEW_PRESETS[DEFAULT_VIEW_PRESET].label;
   }
 
   cycleViewMode() {
-    this.viewPresetIndex = (this.viewPresetIndex + 1) % VIEW_PRESETS.length;
-    const preset = VIEW_PRESETS[this.viewPresetIndex];
-    this.setViewMode(preset.mode, preset.zoom);
+    this.applyPreset((this.viewPresetIndex + 1) % VIEW_PRESETS.length);
   }
 
   /** Toggle one flight (from the Flight Selector) and resolve hover ownership. */
@@ -252,7 +270,6 @@ export default class World {
     if (!v && flight.path && this.ride.path === flight.path) {
       this.stopRide();
       this.ride.path = null;
-      this.rideControls?.setVisible(false);
     }
     flight.setVisible(v);
     this.updateEmphasis();
@@ -285,8 +302,6 @@ export default class World {
   setRideTarget(path) {
     if (!path?.ridePointAt || (this.ride.state !== "inactive" && this.ride.path !== path)) return;
     this.ride.path = path;
-    this.rideControls?.setVisible(true);
-    this.rideControls?.refresh();
     this.vrMenu?.refresh();
   }
 
@@ -375,7 +390,6 @@ export default class World {
     if (!path || !this.rideDuration(path) || ride.state === "playing") return;
     if (ride.state === "paused") {
       ride.state = "playing";
-      this.rideControls.refresh();
       this.vrMenu?.refresh();
       return;
     }
@@ -410,14 +424,12 @@ export default class World {
     if (locomotion) locomotion.update = () => {};
     ride.state = "playing";
     this.updateRidePose();
-    this.rideControls.refresh();
     this.vrMenu?.refresh();
   }
 
   pauseRide() {
     if (this.ride.state !== "playing") return;
     this.ride.state = "paused";
-    this.rideControls.refresh();
     this.vrMenu?.refresh();
   }
 
@@ -495,7 +507,6 @@ export default class World {
     ride.state = "inactive";
     ride.time = 0;
     ride.saved = null;
-    this.rideControls.refresh();
     this.vrMenu?.refresh();
   }
 
@@ -539,7 +550,7 @@ export default class World {
   onCalloutUpdate(data) {
     const pl = data?.payload;
     if (pl?.viewMode) {
-      this.setViewMode(pl.viewMode, pl.zoomFactor);
+      this.setViewMode(pl.viewMode, pl.zoomFactor, pl.scale);
       return;
     }
     if (pl?.menu) {
@@ -635,11 +646,7 @@ export default class World {
     }
 
     const z = ui.addFolder("Scale & Perspectives");
-    z.add({ human: () => this.setViewMode("human") }, "human").name("🚶 Human Scale (Walking)");
-    z.add({ table: () => this.setViewMode("table") }, "table").name("🪑 Table Diorama (0.05x)");
-    z.add({ drone: () => this.setViewMode("fly", 1.0) }, "drone").name("🚁 Drone Overview (1.0x)");
-    z.add({ zoomIn: () => this.setViewMode("fly", 0.45) }, "zoomIn").name("🔍 Zoom Close-Up (2.2x Closer)");
-    z.add({ zoomFar: () => this.setViewMode("fly", 2.2) }, "zoomFar").name("🌐 High Altitude Overview");
+    VIEW_PRESETS.forEach((preset, i) => z.add({ p: () => this.applyPreset(i) }, "p").name(preset.label));
 
     // Flight Selector: one checkbox per flight; each visible flight shows its
     // own options folder (built by the Flight itself) right below. Filled by
@@ -671,7 +678,7 @@ export default class World {
     this.panel?.update();
     this.videoPanel?.update();
     for (const f of this.flights) f.update();
-    this.rideControls?.update();
     this.vrMenu?.update();
+    this.smartwatch?.update();
   }
 }

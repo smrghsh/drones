@@ -12,7 +12,7 @@ export default class Sky {
         this.currentSky = 'daytime';
 
         // Create the physical mesh
-        this.geometry = new THREE.SphereGeometry(500, 60, 40); // Large enough to enclose the scene
+        this.geometry = new THREE.SphereGeometry(3000, 60, 40); // encloses the 1200 m site even at the 1 m : 1 m preset (camera far = 5000)
         this.material = new THREE.MeshBasicMaterial({ 
             side: THREE.BackSide, 
             colorSpace: THREE.SRGBColorSpace 

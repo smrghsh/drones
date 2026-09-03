@@ -1,52 +1,52 @@
 [
   {
     "id": "strip1",
-    "name": "Strip 1 \u2014 Skydio 3D Scan (small strip span)",
+    "name": "Flower Field Scans 1+2 (3D scan)",
     "file": "./flights/strip1.json"
   },
   {
     "id": "strip1-v1",
-    "name": "Strip 1 \u2014 video 1 (during scan)",
+    "name": "Flower Field Scan 1 (video)",
     "file": "./flights/strip1-v1.json"
   },
   {
     "id": "strip1-v2",
-    "name": "Strip 1 \u2014 video 2 (during scan)",
+    "name": "Flower Field Scan 2 (video)",
     "file": "./flights/strip1-v2.json"
   },
   {
     "id": "coyoteBrush",
-    "name": "Coyote Brush \u2014 geotagged photo survey",
+    "name": "Coyote Brush Investigation",
     "file": "./flights/coyoteBrush.json"
   },
   {
     "id": "test2",
-    "name": "Bean field \u2014 Skydio 3D Scan (crop rows)",
+    "name": "Lentil Scans (first test)",
     "file": "./flights/test2.json"
   },
   {
     "id": "slaughterhouse",
-    "name": "Historic slaughterhouse \u2014 building scan (OBJ)",
+    "name": "Historical Slaughterhouse Scan",
     "file": "./flights/slaughterhouse.json"
   },
   {
     "id": "tomato",
-    "name": "Tomato flight \u2014 Skydio 3D Scan (2026-08-31)",
+    "name": "Tomato Scan 1 (3D scan)",
     "file": "./flights/tomato.json"
   },
   {
     "id": "tomato-v1",
-    "name": "Tomato flight \u2014 video (during scan)",
+    "name": "Tomato Scan 1 (video)",
     "file": "./flights/tomato-v1.json"
   },
   {
     "id": "tomato2d",
-    "name": "Tomato plot 2D capture (2026-08-31)",
+    "name": "Tomato Scan 2 (2D capture)",
     "file": "./flights/tomato2d.json"
   },
   {
     "id": "tomato2d-v1",
-    "name": "Tomato plot 2D \u2014 video (during capture)",
+    "name": "Tomato Scan 2 (video)",
     "file": "./flights/tomato2d-v1.json"
   }
 ]
