@@ -257,10 +257,21 @@ export default class VRMenu extends THREE.Group {
   }
 
   bindRightController(rightController) {
-    if (!rightController || this.boundRightController === rightController) return;
+    if (this.boundRightController === rightController) return;
     this.boundRightController?.removeEventListener("selectstart", this.onRightTriggerStart);
     this.boundRightController?.removeEventListener("selectend", this.onRightTriggerEnd);
-    this.boundRightController = rightController;
+    this.boundRightController = rightController ?? null;
+    if (!rightController) {
+      this.rightTriggerActive = false;
+      this.wasTriggerPressed = false;
+      this.triggerArmed = true;
+      return;
+    }
+    // A controller can connect while its trigger is already held. Require a
+    // release before the newly bound right hand may activate any menu row.
+    this.rightTriggerActive = false;
+    this.wasTriggerPressed = Boolean(rightController.padControls?.primaryTrigger?.isPressed);
+    this.triggerArmed = false;
     // select = index trigger. No squeeze listeners are registered here.
     rightController.addEventListener("selectstart", this.onRightTriggerStart);
     rightController.addEventListener("selectend", this.onRightTriggerEnd);
@@ -282,12 +293,23 @@ export default class VRMenu extends THREE.Group {
   }
 
   update() {
-    if (!this.visible) return;
     const controller = this.experience.controller;
-    const leftController = controller?.leftController;
+    const leftController = controller?.l_connection ? controller.leftController : null;
+    const shouldShow = this.experience.isXRActive() && Boolean(leftController);
+    if (this.visible !== shouldShow) this.setVisible(shouldShow);
+    if (!shouldShow) {
+      this.bindRightController(null);
+      return;
+    }
     if (leftController && this.parent !== leftController) leftController.add(this);
-    const rightController = controller?.rightController;
+    // brahma may point rightController at its fallback object before a real
+    // right hand connects. Never let that fallback make left-trigger choices.
+    const rightController = controller?.r_connection ? controller.rightController : null;
     this.bindRightController(rightController);
+    if (!rightController) {
+      this.setHovered(null);
+      return;
+    }
     this.updateRay(rightController);
 
     const trigger = rightController?.padControls?.primaryTrigger;

@@ -1,3 +1,4 @@
+/** Viewer-following FPV controls with ping-safe pointer selection. */
 import * as THREE from "three";
 import { Experience } from "brahma-xr";
 
@@ -38,7 +39,9 @@ export default class RideControls extends THREE.Group {
       const item = { key, action, mesh, canvas, texture, ctx: canvas.getContext("2d"), hover: false };
       mesh.onHover = () => { item.hover = true; this.draw(item); };
       mesh.onUnhover = () => { item.hover = false; this.draw(item); };
-      mesh.onSelect = () => { if (this.enabled(item)) item.action(); };
+      mesh.onSelect = () => {
+        if (!this.world.blocksControlSelectionForPing() && this.enabled(item)) item.action();
+      };
       this.items.push(item);
       this.add(mesh);
       this.draw(item);

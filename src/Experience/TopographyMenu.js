@@ -47,7 +47,11 @@ export default class TopographyMenu extends THREE.Group {
         mesh.selectable = true;
         mesh.onHover = () => { item.hover = true; this.draw(item); };
         mesh.onUnhover = () => { item.hover = false; this.draw(item); };
-        mesh.onSelect = () => { action(); this.refresh(); };
+        mesh.onSelect = () => {
+          if (this.world.blocksControlSelectionForPing()) return;
+          action();
+          this.refresh();
+        };
       }
       this.items.push(item); this.add(mesh); this.draw(item);
     });

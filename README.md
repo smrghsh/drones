@@ -168,6 +168,7 @@ Use **Collaboration → Ping area (next click)** on desktop, or **Ping area** in
 the left-controller VR menu. Then click the terrain or a flight path, or aim
 the right-controller ray and press the right index trigger. Placement is
 one-shot and automatically disarms; selecting the command again cancels it.
+The left trigger and both controllers' grip/side buttons cannot place pings.
 
 The sender and everyone joined to the same brahma room see an eight-second
 sender-colored ring, beacon, and name label. Pings use the farm model's local

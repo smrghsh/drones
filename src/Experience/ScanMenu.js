@@ -1,3 +1,4 @@
+/** In-scene scan representation controls with ping-safe pointer selection. */
 import * as THREE from "three";
 import { Experience } from "brahma-xr";
 
@@ -52,7 +53,9 @@ export default class ScanMenu extends THREE.Group {
         mesh.selectable = true;
         mesh.onHover = () => { this.hoverKey = key; this.draw(item); };
         mesh.onUnhover = () => { if (this.hoverKey === key) this.hoverKey = null; this.draw(item); };
-        mesh.onSelect = () => this.activate(item);
+        mesh.onSelect = () => {
+          if (!this.experience.world?.blocksControlSelectionForPing?.()) this.activate(item);
+        };
         this.experience.selectableObjects.push(mesh);
       }
       this.rows.add(mesh);

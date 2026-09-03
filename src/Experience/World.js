@@ -452,6 +452,19 @@ export default class World {
     return this.experience.networking?.connected ? "SHARED" : "LOCAL ONLY";
   }
 
+  /** Return controls only for a connected right hand, never brahma's left-hand fallback. */
+  rightPingPadControls() {
+    const controller = this.experience.controller;
+    return controller?.r_connection ? controller.rightController?.padControls : null;
+  }
+
+  /** Keep non-placement controls inert while a ping click or trigger is being consumed. */
+  blocksControlSelectionForPing() {
+    return this.pingPlacementArmed
+      || this.pingBlocksDesktopEvent
+      || this.pingBlocksXRSelectionUntilRelease;
+  }
+
   setPingPlacementArmed(armed) {
     this.pingPlacementArmed = Boolean(armed);
     this.pingNeedsTriggerRelease = this.pingPlacementArmed && this.experience.isXRActive();
@@ -481,7 +494,7 @@ export default class World {
     if (!this.pingPlacementArmed) return false;
     const xrActive = this.experience.isXRActive();
     if (xrActive) {
-      const trigger = this.experience.controller?.rightController?.padControls?.primaryTrigger;
+      const trigger = this.rightPingPadControls()?.primaryTrigger;
       if (this.pingNeedsTriggerRelease || !trigger?.isPressed) return true;
     }
     if (!worldPoint) return true;
@@ -558,7 +571,7 @@ export default class World {
     this.model.add(marker);
     this.pings.set(key, marker);
     if (remote && this.experience.isXRActive()) {
-      this.experience.controller?.rightController?.padControls?.pulse(70, 0.3);
+      this.rightPingPadControls()?.pulse(70, 0.3);
     }
   }
 
@@ -572,12 +585,12 @@ export default class World {
   }
 
   updatePings() {
-    const trigger = this.experience.controller?.rightController?.padControls?.primaryTrigger;
+    const trigger = this.rightPingPadControls()?.primaryTrigger;
     if (this.pingPlacementArmed && this.pingNeedsTriggerRelease) {
-      if (!trigger?.isPressed) this.pingNeedsTriggerRelease = false;
+      if (trigger && !trigger.isPressed) this.pingNeedsTriggerRelease = false;
     }
     if (this.pingBlocksXRSelectionUntilRelease
-      && (!this.experience.isXRActive() || !trigger?.isPressed)) {
+      && (!this.experience.isXRActive() || (trigger && !trigger.isPressed))) {
       this.pingBlocksXRSelectionUntilRelease = false;
     }
     const now = performance.now();
